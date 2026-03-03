@@ -1,0 +1,427 @@
+---
+title: 'TableCatalog'
+description: 'Table metadata management and schema persistence'
+---
+
+The `TableCatalog` struct manages table definitions, schemas, and page allocation for all tables in a HozonDB database.
+
+## Struct Definitions
+
+### TableCatalog
+
+```rust
+pub struct TableCatalog {
+    tables: HashMap<String, TableMetadata>,
+    page_manager: PageManager,
+}
+```
+
+<ParamField path="tables" type="HashMap<String, TableMetadata>">
+  Map of table names to their metadata
+</ParamField>
+
+<ParamField path="page_manager" type="PageManager">
+  Underlying page manager for storage operations
+</ParamField>
+
+### TableMetadata
+
+```rust
+pub struct TableMetadata {
+    schema: Schema,
+    first_page: u32,
+}
+```
+
+<ParamField path="schema" type="Schema">
+  Table schema (name and column definitions)
+</ParamField>
+
+<ParamField path="first_page" type="u32">
+  Page ID of the first page containing table data
+</ParamField>
+
+## Methods
+
+### new
+
+Creates or opens a table catalog.
+
+```rust
+pub fn new(mut page_manager: PageManager) -> io::Result<Self>
+```
+
+<ParamField path="page_manager" type="PageManager" required>
+  PageManager instance for the database
+</ParamField>
+
+<ResponseField name="return" type="io::Result<TableCatalog>">
+  - `Ok(TableCatalog)` with loaded table definitions
+  - `Err` on I/O failure
+</ResponseField>
+
+**Behavior:**
+- Allocates page 1 for catalog if new database
+- Loads existing table definitions from page 1
+- Returns empty catalog for new databases
+
+**Example:**
+```rust
+use hozondb::catalog::table::TableCatalog;
+use hozondb::storage::page::PageManager;
+
+let pm = PageManager::new("mydb.hdb")?;
+let catalog = TableCatalog::new(pm)?;
+```
+
+### create_table
+
+Creates a new table with the given schema.
+
+```rust
+pub fn create_table(&mut self, schema: Schema) -> io::Result<()>
+```
+
+<ParamField path="schema" type="Schema" required>
+  Table schema containing name and column definitions
+</ParamField>
+
+<ResponseField name="return" type="io::Result<()>">
+  `Ok(())` on success, `Err` on failure
+</ResponseField>
+
+**Behavior:**
+- Allocates first data page for the table
+- Adds table to in-memory catalog
+- Persists catalog to disk
+
+**Example:**
+```rust
+use hozondb::catalog::schema::{Schema, Column, DataType};
+
+let schema = Schema::new(
+    "users",
+    vec![
+        Column::new("id", DataType::Integer),
+        Column::new("name", DataType::Text),
+        Column::new("active", DataType::Boolean),
+    ],
+);
+
+catalog.create_table(schema)?;
+```
+
+### get_table
+
+Retrieves metadata for a table.
+
+```rust
+pub fn get_table(&self, name: &str) -> Option<&TableMetadata>
+```
+
+<ParamField path="name" type="&str" required>
+  Table name
+</ParamField>
+
+<ResponseField name="return" type="Option<&TableMetadata>">
+  Reference to table metadata, or `None` if table doesn't exist
+</ResponseField>
+
+**Example:**
+```rust
+if let Some(meta) = catalog.get_table("users") {
+    println!("First page: {}", meta.first_page());
+    println!("Columns: {}", meta.schema().columns().len());
+} else {
+    println!("Table not found");
+}
+```
+
+### list_tables
+
+Returns names of all tables in the catalog.
+
+```rust
+pub fn list_tables(&self) -> Vec<String>
+```
+
+<ResponseField name="return" type="Vec<String>">
+  Vector of table names
+</ResponseField>
+
+**Example:**
+```rust
+let tables = catalog.list_tables();
+for table in tables {
+    println!("Table: {}", table);
+}
+```
+
+### drop_table
+
+Deletes a table from the catalog.
+
+```rust
+pub fn drop_table(&mut self, name: &str) -> io::Result<()>
+```
+
+<ParamField path="name" type="&str" required>
+  Name of table to drop
+</ParamField>
+
+<ResponseField name="return" type="io::Result<()>">
+  - `Ok(())` on success
+  - `Err(NotFound)` if table doesn't exist
+</ResponseField>
+
+**Note:** This only removes the table from the catalog. The caller must free the table's pages separately.
+
+**Example:**
+```rust
+catalog.drop_table("users")?;
+
+// Caller should also free pages:
+let page_chain = vec![page1, page2, page3]; // Pages used by table
+for page in page_chain {
+    catalog.free_page(page)?;
+}
+```
+
+### save
+
+Persists the catalog to disk (page 1).
+
+```rust
+pub fn save(&mut self) -> io::Result<()>
+```
+
+<ResponseField name="return" type="io::Result<()>">
+  `Ok(())` on success
+</ResponseField>
+
+**Note:** This is called automatically by `create_table()` and `drop_table()`.
+
+### to_bytes
+
+Serializes the catalog to bytes.
+
+```rust
+pub fn to_bytes(&self) -> Vec<u8>
+```
+
+<ResponseField name="return" type="Vec<u8>">
+  Serialized catalog data
+</ResponseField>
+
+**Format:**
+```
+[4 bytes: num_tables]
+[for each table:]
+  [schema bytes]
+  [4 bytes: first_page]
+```
+
+## Page Management Methods
+
+TableCatalog delegates these methods to its internal PageManager:
+
+### read_page
+
+```rust
+pub fn read_page(&self, page_id: u32) -> io::Result<[u8; 4096]>
+```
+
+### write_page
+
+```rust
+pub fn write_page(&mut self, page_id: u32, data: &[u8]) -> io::Result<()>
+```
+
+### read_page_metadata
+
+```rust
+pub fn read_page_metadata(&self, page_id: u32) -> io::Result<PageMetadata>
+```
+
+### update_page_metadata
+
+```rust
+pub fn update_page_metadata(&mut self, page_id: u32, metadata: &PageMetadata) -> io::Result<()>
+```
+
+### allocate_page
+
+```rust
+pub fn allocate_page(&mut self) -> io::Result<PageId>
+```
+
+### free_page
+
+```rust
+pub fn free_page(&mut self, page_id: PageId) -> io::Result<()>
+```
+
+### number_of_pages
+
+```rust
+pub fn number_of_pages(&self) -> u32
+```
+
+### get_first_free_page
+
+```rust
+pub fn get_first_free_page(&self) -> Option<PageId>
+```
+
+## TableMetadata Methods
+
+### first_page
+
+Returns the first page ID for the table.
+
+```rust
+pub fn first_page(&self) -> u32
+```
+
+### schema
+
+Returns a reference to the table's schema.
+
+```rust
+pub fn schema(&self) -> &Schema
+```
+
+**Example:**
+```rust
+let meta = catalog.get_table("users").unwrap();
+let schema = meta.schema();
+
+println!("Table: {}", schema.table_name());
+for column in schema.columns() {
+    println!("  {}: {:?}", column.name(), column.data_type());
+}
+```
+
+## Catalog Persistence
+
+The catalog is stored in **page 1** of the database file:
+
+### Catalog Format
+
+```
+Page 1:
+  [4 bytes] Number of tables (u32)
+  
+  For each table:
+    [Schema bytes]
+      [2 bytes] Table name length (u16)
+      [n bytes] Table name (UTF-8)
+      [4 bytes] Number of columns (u32)
+      
+      For each column:
+        [2 bytes] Column name length (u16)
+        [n bytes] Column name (UTF-8)
+        [1 byte]  Data type (0=Integer, 1=Text, 2=Boolean, 3=Null)
+    
+    [4 bytes] First page ID (u32)
+```
+
+## Complete Example
+
+```rust
+use hozondb::catalog::table::TableCatalog;
+use hozondb::catalog::schema::{Schema, Column, DataType};
+use hozondb::storage::page::PageManager;
+
+// Open database
+let pm = PageManager::new("company.hdb")?;
+let mut catalog = TableCatalog::new(pm)?;
+
+// Create employees table
+let employees_schema = Schema::new(
+    "employees",
+    vec![
+        Column::new("id", DataType::Integer),
+        Column::new("name", DataType::Text),
+        Column::new("department", DataType::Text),
+        Column::new("salary", DataType::Integer),
+        Column::new("active", DataType::Boolean),
+    ],
+);
+catalog.create_table(employees_schema)?;
+
+// Create departments table
+let departments_schema = Schema::new(
+    "departments",
+    vec![
+        Column::new("id", DataType::Integer),
+        Column::new("name", DataType::Text),
+        Column::new("budget", DataType::Integer),
+    ],
+);
+catalog.create_table(departments_schema)?;
+
+// List all tables
+let tables = catalog.list_tables();
+println!("Tables: {:?}", tables); // ["employees", "departments"]
+
+// Get table info
+if let Some(meta) = catalog.get_table("employees") {
+    println!("Employees table:");
+    println!("  First page: {}", meta.first_page());
+    println!("  Columns:");
+    
+    for col in meta.schema().columns() {
+        println!("    - {}: {:?}", col.name(), col.data_type());
+    }
+}
+
+// Drop a table
+catalog.drop_table("departments")?;
+
+println!("Remaining tables: {:?}", catalog.list_tables()); // ["employees"]
+```
+
+## Persistence Example
+
+```rust
+// Session 1: Create tables
+{
+    let pm = PageManager::new("db.hdb")?;
+    let mut catalog = TableCatalog::new(pm)?;
+    
+    catalog.create_table(Schema::new(
+        "users",
+        vec![Column::new("id", DataType::Integer)],
+    ))?;
+    
+    catalog.create_table(Schema::new(
+        "posts",
+        vec![
+            Column::new("id", DataType::Integer),
+            Column::new("title", DataType::Text),
+        ],
+    ))?;
+    
+    println!("Created {} tables", catalog.list_tables().len()); // 2
+} // catalog dropped, data saved
+
+// Session 2: Load existing catalog
+{
+    let pm = PageManager::new("db.hdb")?;
+    let catalog = TableCatalog::new(pm)?;
+    
+    println!("Loaded {} tables", catalog.list_tables().len()); // 2
+    
+    assert!(catalog.get_table("users").is_some());
+    assert!(catalog.get_table("posts").is_some());
+}
+```
+
+## Related Types
+
+- `Schema` - Table schema (name and columns)
+- `Column` - Column definition (name and data type)
+- `DataType` - Column data types (Integer, Text, Boolean, Null)
+- [PageManager](/api/page-manager) - Low-level storage operations
+- [Executor](/api/executor) - Uses TableCatalog for query execution

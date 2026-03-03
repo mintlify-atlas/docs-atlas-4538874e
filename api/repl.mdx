@@ -1,0 +1,181 @@
+---
+title: 'Repl'
+description: 'Interactive command-line interface for HozonDB'
+---
+
+The `Repl` struct provides an interactive Read-Eval-Print Loop for executing SQL commands and meta-commands against a HozonDB database.
+
+## Overview
+
+The REPL is the primary interface for interacting with HozonDB. It supports SQL statements (CREATE, INSERT, SELECT, UPDATE, DELETE, DROP) and special meta-commands prefixed with a dot (.).
+
+## Struct Definition
+
+```rust
+pub struct Repl {
+    executor: Option<Executor>,
+}
+```
+
+<ParamField path="executor" type="Option<Executor>">
+  Optional executor instance. `None` until a database is opened with `.open`.
+</ParamField>
+
+## Methods
+
+### new
+
+Creates a new REPL instance without an active database connection.
+
+```rust
+pub fn new() -> Self
+```
+
+<ResponseField name="return" type="Repl">
+  A new REPL instance with no executor initialized
+</ResponseField>
+
+**Example:**
+```rust
+use hozondb::repl::Repl;
+
+let mut repl = Repl::new();
+```
+
+### run
+
+Starts the interactive REPL loop. Continuously reads user input, executes commands, and displays results.
+
+```rust
+pub fn run(&mut self)
+```
+
+**Behavior:**
+- Displays welcome message and prompt
+- Reads commands from stdin
+- Executes SQL or meta-commands
+- Exits on `.exit` or `.quit`
+
+**Example:**
+```rust
+let mut repl = Repl::new();
+repl.run(); // Starts interactive session
+```
+
+### execute_command
+
+Executes a single command (SQL statement or meta-command).
+
+```rust
+pub fn execute_command(&mut self, command: &str) -> io::Result<()>
+```
+
+<ParamField path="command" type="&str" required>
+  The command to execute. Can be SQL (e.g., `CREATE TABLE ...`) or meta-command (e.g., `.open db.hdb`)
+</ParamField>
+
+<ResponseField name="return" type="io::Result<()>">
+  `Ok(())` on success, `Err` if the command fails
+</ResponseField>
+
+**Example:**
+```rust
+let mut repl = Repl::new();
+
+// Open database
+repl.execute_command(".open mydb.hdb")?;
+
+// Create table
+repl.execute_command("CREATE TABLE users (id INTEGER, name TEXT);")?;
+
+// Insert data
+repl.execute_command("INSERT INTO users VALUES (1, 'Alice');")?;
+
+// Query data
+repl.execute_command("SELECT * FROM users;")?;
+```
+
+## Meta-Commands
+
+Meta-commands are prefixed with a dot and provide database management functionality.
+
+### .help
+
+Displays available commands and usage information.
+
+```bash
+hozondb> .help
+```
+
+### .open
+
+Opens or creates a database file.
+
+```bash
+hozondb> .open mydb.hdb
+```
+
+<ParamField path="filename" type="string" required>
+  Path to database file. Creates the file if it doesn't exist.
+</ParamField>
+
+**Example:**
+```rust
+repl.execute_command(".open mydb.hdb")?;
+```
+
+### .benchmark
+
+Runs performance benchmarks on the database.
+
+```bash
+hozondb> .benchmark [rows]
+```
+
+<ParamField path="rows" type="integer" default="10000">
+  Number of rows to use in benchmark tests
+</ParamField>
+
+**Example:**
+```bash
+hozondb> .benchmark 50000
+```
+
+### .exit / .quit
+
+Exits the REPL session.
+
+```bash
+hozondb> .exit
+```
+
+## Execution Flow
+
+1. **Command Reception**: User input is read from stdin
+2. **Command Routing**: 
+   - Commands starting with `.` are routed to meta-command handler
+   - Other commands are treated as SQL statements
+3. **SQL Execution**:
+   - Tokenized by `tokenizer::tokenize()`
+   - Parsed into `Statement` by `Parser::parse()`
+   - Executed by `Executor::execute()`
+4. **Result Display**:
+   - Success messages for DDL/DML operations
+   - Formatted table output for SELECT queries
+
+## Error Handling
+
+Errors are displayed to stderr but don't terminate the REPL session:
+
+```rust
+if let Err(e) = repl.execute_command(input) {
+    eprintln!("Error: {}", e);
+}
+```
+
+## Related Types
+
+- [Executor](/api/executor) - Executes parsed SQL statements
+- [Parser](/api/parser) - Parses SQL tokens into statements
+- `TableCatalog` - Manages database schema
+- `PageManager` - Handles storage operations

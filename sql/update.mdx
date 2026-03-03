@@ -1,0 +1,262 @@
+---
+title: UPDATE
+description: Modify existing rows with the UPDATE statement
+---
+
+The `UPDATE` statement modifies column values in existing rows, optionally filtered by a WHERE clause.
+
+## Syntax
+
+```sql
+-- Update all rows
+UPDATE table_name SET column = value;
+
+-- Update specific rows
+UPDATE table_name SET column = value WHERE condition;
+
+-- Update multiple columns
+UPDATE table_name SET column1 = value1, column2 = value2 WHERE condition;
+```
+
+## Parameters
+
+- `table_name` - Name of the table to update
+- `column` - Column name to modify
+- `value` - New value (must match column data type)
+- `WHERE condition` - Optional filter to select which rows to update
+
+## Examples
+
+### Update Single Column
+
+Update one column with a WHERE clause:
+
+```sql
+UPDATE users SET age = 30 WHERE id = 1;
+```
+
+From the test suite (src/sql/parser.rs:1071-1102):
+
+```sql
+UPDATE users SET age = 30 WHERE id = 1;
+```
+
+### Update Multiple Columns
+
+Set multiple columns in one statement:
+
+```sql
+UPDATE users SET name = 'Bob', age = 25 WHERE id = 2;
+```
+
+From the test suite (src/sql/parser.rs:1105-1139):
+
+```sql
+UPDATE users SET name = 'Bob', age = 25 WHERE id = 2;
+```
+
+### Update All Rows
+
+Omit the WHERE clause to update every row:
+
+```sql
+UPDATE users SET active = false;
+```
+
+<Warning>
+Updating without a WHERE clause modifies ALL rows in the table. Use with caution!
+</Warning>
+
+### Update with Different Types
+
+Update columns of various data types:
+
+```sql
+-- Integer
+UPDATE products SET price = 100 WHERE id = 1;
+
+-- Text
+UPDATE users SET name = 'Alice' WHERE id = 1;
+
+-- Boolean
+UPDATE users SET active = true WHERE id = 1;
+
+-- NULL
+UPDATE users SET email = NULL WHERE id = 1;
+```
+
+## Assignment Syntax
+
+Assignments use the format: `column = value`
+
+Multiple assignments are separated by commas:
+
+```sql
+UPDATE users SET 
+  name = 'New Name',
+  age = 25,
+  active = true
+WHERE id = 1;
+```
+
+## Type Validation
+
+HozonDB validates that update values match column data types:
+
+```sql
+CREATE TABLE users (id INTEGER, name TEXT);
+
+-- ✓ Correct types
+UPDATE users SET name = 'Alice' WHERE id = 1;
+
+-- ❌ Error: type mismatch
+UPDATE users SET name = 123 WHERE id = 1;
+```
+
+From the executor (src/sql/executor.rs:556-584), validation checks:
+1. Column exists in the table
+2. Value type matches the column's data type
+3. NULL is accepted for any column type
+
+## WHERE Clause
+
+The WHERE clause determines which rows to update. It supports all comparison and logical operators.
+
+### Simple Condition
+
+```sql
+UPDATE users SET active = false WHERE id = 5;
+```
+
+### Complex Conditions
+
+```sql
+UPDATE users SET role = 'admin' 
+WHERE age >= 18 AND active = true;
+```
+
+```sql
+UPDATE products SET discount = 0.2 
+WHERE category = 'electronics' OR category = 'books';
+```
+
+See [WHERE Clauses](/sql/where-clauses) for detailed filtering examples.
+
+## Implementation Details
+
+From the parser (src/sql/parser.rs:451-520):
+
+```rust
+Update {
+    table_name: String,
+    assignments: Vec<(String, Value)>,
+    where_clause: Option<Expr>,
+}
+```
+
+The parser:
+1. Expects `UPDATE` keyword
+2. Parses table name
+3. Expects `SET` keyword
+4. Parses column = value assignments (comma-separated)
+5. Optionally parses WHERE clause
+6. Expects semicolon
+
+## Execution Process
+
+From the executor (src/sql/executor.rs:544-645):
+
+1. Validates all assignments (column existence and type matching)
+2. Reads all rows from the table
+3. Evaluates WHERE clause for each row
+4. Applies assignments to matching rows
+5. Writes updated rows back to storage
+6. Returns count of modified rows
+
+## Success Message
+
+On successful update, HozonDB returns:
+
+```
+1 row updated.
+```
+
+Or for multiple rows:
+
+```
+5 rows updated.
+```
+
+## Examples with Results
+
+### Update and Verify
+
+```sql
+CREATE TABLE users (id INTEGER, name TEXT, age INTEGER);
+INSERT INTO users VALUES (1, 'Alice', 25);
+INSERT INTO users VALUES (2, 'Bob', 30);
+
+-- Update one row
+UPDATE users SET age = 26 WHERE id = 1;
+-- Returns: 1 row updated.
+
+-- Verify
+SELECT * FROM users WHERE id = 1;
+-- Returns: id=1, name='Alice', age=26
+```
+
+### Update Multiple Rows
+
+```sql
+-- Update all users over 25
+UPDATE users SET active = true WHERE age > 25;
+-- Returns: 2 rows updated.
+```
+
+### No Matching Rows
+
+```sql
+UPDATE users SET name = 'Charlie' WHERE id = 999;
+-- Returns: 0 rows updated.
+```
+
+## Common Errors
+
+<Warning>
+**Nonexistent Column**
+
+```sql
+CREATE TABLE users (id INTEGER, name TEXT);
+UPDATE users SET email = 'test@example.com' WHERE id = 1;
+-- Error: Column 'email' does not exist in table 'users'
+```
+</Warning>
+
+<Warning>
+**Type Mismatch**
+
+```sql
+CREATE TABLE users (id INTEGER, name TEXT);
+UPDATE users SET id = 'not a number' WHERE name = 'Alice';
+-- Error: Type mismatch for column 'id': expected Integer, got Text
+```
+</Warning>
+
+<Warning>
+**Missing SET Keyword**
+
+```sql
+-- ❌ Wrong
+UPDATE users name = 'Alice' WHERE id = 1;
+
+-- ✓ Correct
+UPDATE users SET name = 'Alice' WHERE id = 1;
+```
+</Warning>
+
+## See Also
+
+- [SELECT](/sql/select) - Query data before updating
+- [WHERE Clauses](/sql/where-clauses) - Filter rows to update
+- [INSERT](/sql/insert) - Add new rows
+- [DELETE](/sql/delete) - Remove rows

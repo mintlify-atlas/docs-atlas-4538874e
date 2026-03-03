@@ -1,0 +1,288 @@
+---
+title: Multi-Page Support
+description: How HozonDB tables span multiple pages using linked page chains
+---
+
+When a table grows beyond the capacity of a single page, HozonDB automatically links multiple pages together using a forward-linked list structure. This enables tables to store unlimited rows while maintaining efficient sequential access.
+
+## Why Multi-Page Tables?
+
+Each page has a limited data capacity:
+
+- **Total page size**: 4096 bytes
+- **Metadata overhead**: 9 bytes
+- **Available for data**: 4087 bytes
+
+When rows no longer fit in a single page, HozonDB allocates additional pages and links them together.
+
+## Page Linking Mechanism
+
+Pages are linked using the `next_page` field in the page metadata:
+
+```rust
+pub struct PageMetadata {
+    pub is_full: bool,
+    pub last_offset: usize,
+    pub num_rows: usize,
+    pub next_page: Option<u32>,  // Link to next page
+}
+```
+
+The `next_page` field:
+- Contains `Some(page_id)` if there's a next page
+- Contains `None` (stored as `0xFFFFFFFF`) if this is the last page
+
+### On-Disk Representation
+
+```rust
+const NULL_PAGE: u32 = 0xFFFFFFFF;  // Sentinel value for None
+
+// Writing metadata
+let next_page = metadata.next_page.unwrap_or(NULL_PAGE);
+page_data[5..9].copy_from_slice(&next_page.to_le_bytes());
+
+// Reading metadata
+let next_page = u32::from_le_bytes([...]);
+let next_page_option = if next_page == NULL_PAGE {
+    None
+} else {
+    Some(next_page)
+};
+```
+
+## Table Structure
+
+Each table starts with a **first page** stored in the system catalog:
+
+```rust
+pub struct TableMetadata {
+    schema: Schema,
+    first_page: u32,  // Entry point to the page chain
+}
+```
+
+The first page links to subsequent pages, forming a chain:
+
+```
+Table "users" (first_page = 2)
+
+┌─────────────┐      ┌─────────────┐      ┌─────────────┐
+│  Page 2     │      │  Page 5     │      │  Page 8     │
+├─────────────┤      ├─────────────┤      ├─────────────┤
+│ next_page:5 │─────>│ next_page:8 │─────>│ next_page:∅ │
+│ num_rows: 50│      │ num_rows: 50│      │ num_rows: 23│
+│ is_full: Y  │      │ is_full: Y  │      │ is_full: N  │
+│ [row data]  │      │ [row data]  │      │ [row data]  │
+└─────────────┘      └─────────────┘      └─────────────┘
+```
+
+## Traversing a Multi-Page Table
+
+To read all rows from a table:
+
+```rust
+// Start at the first page
+let mut current_page_id = table_metadata.first_page();
+
+loop {
+    // Read the current page
+    let page_data = page_manager.read_page(current_page_id)?;
+    let metadata = PageManager::read_metadata_from_buffer(&page_data);
+    
+    // Process rows in this page
+    for row_index in 0..metadata.num_rows {
+        // Extract and process row data
+    }
+    
+    // Move to next page if it exists
+    match metadata.next_page {
+        Some(next_id) => current_page_id = next_id,
+        None => break,  // End of chain
+    }
+}
+```
+
+## Adding a New Page to a Table
+
+When the current page becomes full:
+
+```rust
+// Allocate a new page
+let new_page_id = page_manager.allocate_page()?;
+
+// Update the old page's metadata to link to the new page
+let mut old_metadata = page_manager.read_page_metadata(current_page_id)?;
+old_metadata.next_page = Some(new_page_id);
+old_metadata.is_full = true;
+page_manager.update_page_metadata(current_page_id, &old_metadata)?;
+
+// Initialize the new page with default metadata
+let new_metadata = PageMetadata {
+    is_full: false,
+    last_offset: PAGE_DATA_START,  // 9 bytes
+    num_rows: 0,
+    next_page: None,  // This is now the last page
+};
+page_manager.update_page_metadata(new_page_id, &new_metadata)?;
+```
+
+## Page Chain Example
+
+Consider a table with 150 rows that each take 100 bytes:
+
+- **Rows per page**: ~40 rows (4087 / 100)
+- **Pages needed**: 4 pages
+
+```
+Page 2: Rows 1-40    (next_page: 3)
+Page 3: Rows 41-80   (next_page: 4)  
+Page 4: Rows 81-120  (next_page: 7)
+Page 7: Rows 121-150 (next_page: None)
+```
+
+Notice that page IDs don't need to be consecutive - pages can be allocated from the free list.
+
+## Determining When a Page is Full
+
+The `is_full` flag indicates when a page can no longer accept new rows:
+
+```rust
+// Check if there's space for a new row
+let row_size = calculate_row_size(&row);
+let metadata = page_manager.read_page_metadata(page_id)?;
+
+let space_remaining = PAGE_SIZE - metadata.last_offset;
+
+if space_remaining < row_size {
+    // Mark page as full
+    metadata.is_full = true;
+    page_manager.update_page_metadata(page_id, &metadata)?;
+    
+    // Allocate and link a new page
+    let new_page_id = allocate_and_link_page(page_id)?;
+}
+```
+
+## Free Page List vs. Table Page Chains
+
+HozonDB uses two different linked list structures:
+
+### Free Page List (LIFO)
+
+Tracks unused pages for reallocation:
+
+```
+PageManager.first_free_page → Page 6 → Page 3 → Page 9 → None
+```
+
+- **Purpose**: Reuse freed pages efficiently
+- **Direction**: Single forward links
+- **Order**: LIFO (last freed, first allocated)
+- **Storage**: First 4 bytes of free pages
+
+### Table Page Chains (Sequential)
+
+Tracks pages belonging to a specific table:
+
+```
+Table.first_page → Page 2 → Page 5 → Page 8 → None
+```
+
+- **Purpose**: Store table data across multiple pages
+- **Direction**: Single forward links
+- **Order**: Insertion order (chronological)
+- **Storage**: Bytes 5-8 of page metadata
+
+## Performance Characteristics
+
+### Sequential Scans
+
+**Time Complexity**: O(n) where n is the number of pages
+
+```rust
+// Read entire table
+for each page in chain {
+    read_page();  // O(1) random access
+    process_rows();
+}
+```
+
+### Random Access
+
+Randomly accessing a specific row requires:
+1. Starting at first_page
+2. Following the chain until the target page
+3. Extracting the row
+
+**Time Complexity**: O(p) where p is the page index
+
+This is why indexes are important for large tables.
+
+### Insertion
+
+Inserting at the end (most common):
+1. Navigate to last page
+2. Check if space available
+3. Insert or allocate new page
+
+**Time Complexity**: O(p) where p is the number of pages
+
+## Example: Building a Multi-Page Table
+
+```rust
+let mut pm = PageManager::new("mydb.hdb")?;
+let mut catalog = TableCatalog::new(pm)?;
+
+// Create a table (allocates first page)
+let schema = Schema::new("users", vec![
+    Column::new("id", DataType::Integer),
+    Column::new("name", DataType::Text),
+]);
+catalog.create_table(schema)?;
+
+let table = catalog.get_table("users").unwrap();
+let mut current_page = table.first_page();
+
+// Insert 200 rows (will span multiple pages)
+for i in 0..200 {
+    let row = create_row(i);
+    let row_bytes = serialize_row(&row);
+    
+    let mut metadata = catalog.read_page_metadata(current_page)?;
+    
+    if PAGE_SIZE - metadata.last_offset < row_bytes.len() {
+        // Page full - allocate and link new page
+        let new_page = catalog.allocate_page()?;
+        metadata.next_page = Some(new_page);
+        metadata.is_full = true;
+        catalog.update_page_metadata(current_page, &metadata)?;
+        current_page = new_page;
+        metadata = catalog.read_page_metadata(current_page)?;
+    }
+    
+    // Write row to current page
+    let mut page_data = catalog.read_page(current_page)?;
+    page_data[metadata.last_offset..metadata.last_offset + row_bytes.len()]
+        .copy_from_slice(&row_bytes);
+    catalog.write_page(current_page, &page_data)?;
+    
+    // Update metadata
+    metadata.last_offset += row_bytes.len();
+    metadata.num_rows += 1;
+    catalog.update_page_metadata(current_page, &metadata)?;
+}
+```
+
+## Future Enhancements
+
+The current implementation could be extended with:
+
+- **Backward links**: Enable reverse traversal
+- **Page directories**: Speed up random access to specific pages
+- **Overflow pages**: Handle rows larger than a single page
+- **Page compaction**: Reclaim fragmented space within pages
+
+## Related Topics
+
+- [Page-Based Storage](/storage/page-based-storage) - Core page structure
+- [File Format](/storage/file-format) - How pages are stored on disk

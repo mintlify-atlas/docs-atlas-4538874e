@@ -1,0 +1,319 @@
+---
+title: SELECT
+description: Query data from tables with SELECT statements
+---
+
+The `SELECT` statement retrieves data from a table, with optional column selection and filtering.
+
+## Syntax
+
+```sql
+-- Select all columns
+SELECT * FROM table_name;
+
+-- Select specific columns
+SELECT column1, column2 FROM table_name;
+
+-- With WHERE clause
+SELECT * FROM table_name WHERE condition;
+```
+
+## Column Selection
+
+### Select All Columns
+
+Use `*` to select all columns:
+
+```sql
+SELECT * FROM users;
+```
+
+From the test suite (src/sql/parser.rs:579-596):
+
+```sql
+SELECT * FROM users;
+```
+
+### Select Specific Columns
+
+List column names separated by commas:
+
+```sql
+SELECT id, name FROM users;
+```
+
+From the test suite (src/sql/parser.rs:599-623):
+
+```sql
+SELECT id, name FROM users;
+```
+
+The columns are returned in the order specified:
+
+```sql
+-- Returns name first, then id
+SELECT name, id FROM users;
+```
+
+## WHERE Clause
+
+Filter results using a WHERE clause with comparison and logical operators.
+
+### Simple Equality
+
+```sql
+SELECT * FROM users WHERE id = 1;
+```
+
+From the test suite (src/sql/parser.rs:627-652):
+
+```sql
+SELECT * FROM users WHERE id = 1;
+```
+
+### Text Comparison
+
+```sql
+SELECT * FROM users WHERE name = 'Alice';
+```
+
+From the test suite (src/sql/parser.rs:699-717):
+
+```sql
+SELECT * FROM users WHERE name = 'Alice';
+```
+
+### Boolean Comparison
+
+```sql
+SELECT * FROM users WHERE active = true;
+```
+
+From the test suite (src/sql/parser.rs:720-735):
+
+```sql
+SELECT * FROM users WHERE active = true;
+```
+
+### Comparison Operators
+
+All comparison operators are supported:
+
+```sql
+-- Equals
+SELECT * FROM users WHERE id = 1;
+
+-- Not equals
+SELECT * FROM users WHERE id != 1;
+
+-- Less than
+SELECT * FROM users WHERE id < 10;
+
+-- Greater than
+SELECT * FROM users WHERE id > 5;
+
+-- Less than or equal
+SELECT * FROM users WHERE id <= 10;
+
+-- Greater than or equal
+SELECT * FROM users WHERE id >= 5;
+```
+
+From the test suite (src/sql/parser.rs:655-695), all six comparison operators are tested.
+
+### Logical Operators
+
+#### AND
+
+Combine conditions that must both be true:
+
+```sql
+SELECT * FROM users WHERE id = 1 AND name = 'Alice';
+```
+
+From the test suite (src/sql/parser.rs:738-763):
+
+```sql
+SELECT * FROM users WHERE id = 1 AND name = 'Alice';
+```
+
+Multiple AND conditions:
+
+```sql
+SELECT * FROM users WHERE id > 1 AND age < 30 AND active = true;
+```
+
+#### OR
+
+Combine conditions where at least one must be true:
+
+```sql
+SELECT * FROM users WHERE id = 1 OR id = 2;
+```
+
+From the test suite (src/sql/parser.rs:766-783):
+
+```sql
+SELECT * FROM users WHERE id = 1 OR id = 2;
+```
+
+Multiple OR conditions:
+
+```sql
+SELECT * FROM users WHERE id = 1 OR id = 2 OR id = 3;
+```
+
+#### Operator Precedence
+
+<Note>
+AND has higher precedence than OR. Use this to create complex conditions.
+</Note>
+
+From the test suite (src/sql/parser.rs:826-859), this query:
+
+```sql
+SELECT * FROM users WHERE id = 1 OR age > 18 AND active = true;
+```
+
+Is parsed as:
+
+```
+id = 1 OR (age > 18 AND active = true)
+```
+
+Complex precedence example:
+
+```sql
+SELECT * FROM users 
+WHERE id = 1 AND age > 18 OR name = 'Alice' AND active = true;
+```
+
+Parsed as:
+
+```
+(id = 1 AND age > 18) OR (name = 'Alice' AND active = true)
+```
+
+### NULL Comparisons
+
+```sql
+SELECT * FROM users WHERE data = NULL;
+```
+
+From the test suite (src/sql/parser.rs:940-955):
+
+```sql
+SELECT * FROM users WHERE data = NULL;
+```
+
+### Negative Numbers
+
+```sql
+SELECT * FROM users WHERE balance < -100;
+```
+
+From the test suite (src/sql/parser.rs:958-976):
+
+```sql
+SELECT * FROM users WHERE balance < -100;
+```
+
+## Examples
+
+### Select All from Empty Table
+
+```sql
+CREATE TABLE users (id INTEGER);
+SELECT * FROM users;
+-- Returns: 0 rows
+```
+
+### Select with Column Projection and Filter
+
+Combine specific columns with WHERE clause:
+
+```sql
+SELECT id, name FROM users WHERE age > 18;
+```
+
+From the test suite (src/sql/parser.rs:910-937):
+
+```sql
+SELECT id, name FROM users WHERE age > 18;
+```
+
+### Complex Query
+
+```sql
+SELECT id, name, email 
+FROM users 
+WHERE age >= 18 AND active = true OR role = 'admin';
+```
+
+## Implementation Details
+
+From the parser (src/sql/parser.rs:263-333):
+
+```rust
+pub enum SelectColumns {
+    All,
+    Specific(Vec<String>),
+}
+
+Select {
+    table_name: String,
+    columns: SelectColumns,
+    where_clause: Option<Expr>,
+}
+```
+
+The parser:
+1. Expects `SELECT` keyword
+2. Parses `*` or comma-separated column names
+3. Expects `FROM` keyword and table name
+4. Optionally parses `WHERE` clause
+5. Expects semicolon terminator
+
+## Query Execution
+
+From the executor (src/sql/executor.rs:381-469):
+
+1. Retrieves all rows from the table
+2. Applies WHERE clause filter if present
+3. Projects columns (all or specific)
+4. Returns result set with column names and rows
+
+## Error Handling
+
+<Warning>
+**Nonexistent Column**
+
+Selecting a column that doesn't exist returns an error:
+
+```sql
+CREATE TABLE users (id INTEGER);
+SELECT nonexistent FROM users;
+-- Error: Column 'nonexistent' does not exist in table 'users'
+```
+</Warning>
+
+<Warning>
+**Missing Semicolon**
+
+All SELECT statements must end with a semicolon:
+
+```sql
+-- ❌ Wrong
+SELECT * FROM users
+
+-- ✓ Correct
+SELECT * FROM users;
+```
+</Warning>
+
+## See Also
+
+- [WHERE Clauses](/sql/where-clauses) - Detailed filtering examples
+- [INSERT](/sql/insert) - Add data to query
+- [UPDATE](/sql/update) - Modify queried data
+- [DELETE](/sql/delete) - Remove filtered rows

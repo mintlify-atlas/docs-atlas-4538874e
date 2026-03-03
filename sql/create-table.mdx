@@ -1,0 +1,131 @@
+---
+title: CREATE TABLE
+description: Create new tables with the CREATE TABLE statement
+---
+
+The `CREATE TABLE` statement defines a new table with a name and a list of columns with their data types.
+
+## Syntax
+
+```sql
+CREATE TABLE table_name (
+  column_name data_type,
+  column_name data_type,
+  ...
+);
+```
+
+## Parameters
+
+- `table_name` - Name of the table to create (identifier)
+- `column_name` - Name of each column (identifier)
+- `data_type` - One of: `INTEGER`, `TEXT`, `BOOLEAN`, or `NULL`
+
+<Note>
+Table and column names are case-sensitive identifiers. They cannot contain spaces or special characters.
+</Note>
+
+## Examples
+
+### Single Column Table
+
+Create a simple table with one column:
+
+```sql
+CREATE TABLE products (name TEXT);
+```
+
+### Multiple Columns
+
+Create a table with multiple columns of different types:
+
+```sql
+CREATE TABLE users (id INTEGER, name TEXT);
+```
+
+### All Data Types
+
+Create a table demonstrating all supported data types:
+
+```sql
+CREAate TABLE test (
+  int_col INTEGER,
+  text_col TEXT,
+  bool_col BOOLEAN,
+  null_col NULL
+);
+```
+
+## Column Definitions
+
+Each column definition consists of:
+1. Column name (identifier)
+2. Data type keyword
+
+Column definitions are separated by commas. The last column should not have a trailing comma.
+
+### Valid Column Names
+
+```sql
+CREATE TABLE examples (
+  id INTEGER,
+  user_name TEXT,
+  isActive BOOLEAN
+);
+```
+
+## Implementation Details
+
+From the parser source code (src/sql/parser.rs:145-213):
+
+- The parser expects the `CREATE TABLE` keywords followed by a table name
+- Column definitions must be enclosed in parentheses
+- Each column requires both a name and a data type
+- The statement must end with a semicolon (`;`)
+
+```rust
+// Parser structure from source
+pub enum Statement {
+    CreateTable {
+        name: String,
+        columns: Vec<Column>,
+    },
+    // ...
+}
+```
+
+## Common Errors
+
+<Warning>
+**Missing Semicolon**
+
+All CREATE TABLE statements must end with a semicolon:
+
+```sql
+-- ❌ Wrong
+CREATE TABLE users (id INTEGER, name TEXT)
+
+-- ✓ Correct
+CREATE TABLE users (id INTEGER, name TEXT);
+```
+</Warning>
+
+<Warning>
+**Invalid Data Type**
+
+Only the four supported data types are valid:
+
+```sql
+-- ❌ Wrong
+CREATE TABLE users (id VARCHAR);
+
+-- ✓ Correct
+CREATE TABLE users (id TEXT);
+```
+</Warning>
+
+## See Also
+
+- [Data Types](/sql/data-types) - Detailed information about supported types
+- [INSERT](/sql/insert) - Add data to created tables
+- [DROP TABLE](/sql/drop-table) - Remove tables

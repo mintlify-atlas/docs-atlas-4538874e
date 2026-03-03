@@ -1,0 +1,416 @@
+---
+title: 'Parser'
+description: 'SQL parser for converting tokens into executable statements'
+---
+
+The `Parser` struct transforms a stream of tokens into structured SQL `Statement` enums that can be executed by the Executor.
+
+## Struct Definition
+
+```rust
+pub struct Parser {
+    tokens: Vec<Token>,
+    position: usize,
+}
+```
+
+<ParamField path="tokens" type="Vec<Token>">
+  The token stream produced by the tokenizer
+</ParamField>
+
+<ParamField path="position" type="usize">
+  Current parsing position in the token stream
+</ParamField>
+
+## Methods
+
+### new
+
+Creates a new parser from a token stream.
+
+```rust
+pub fn new(tokens: Vec<Token>) -> Self
+```
+
+<ParamField path="tokens" type="Vec<Token>" required>
+  Token stream from the tokenizer
+</ParamField>
+
+<ResponseField name="return" type="Parser">
+  A new parser instance positioned at the start of the token stream
+</ResponseField>
+
+**Example:**
+```rust
+use hozondb::sql::parser::Parser;
+use hozondb::sql::tokenizer;
+
+let tokens = tokenizer::tokenize("SELECT * FROM users;")?;
+let mut parser = Parser::new(tokens);
+```
+
+### parse
+
+Parses the token stream into a SQL statement.
+
+```rust
+pub fn parse(&mut self) -> io::Result<Statement>
+```
+
+<ResponseField name="return" type="io::Result<Statement>">
+  - `Ok(Statement)` - Successfully parsed statement
+  - `Err` - Parse error with description
+</ResponseField>
+
+**Example:**
+```rust
+let sql = "CREATE TABLE users (id INTEGER, name TEXT);";
+let tokens = tokenizer::tokenize(sql)?;
+let mut parser = Parser::new(tokens);
+let statement = parser.parse()?;
+
+match statement {
+    Statement::CreateTable { name, columns } => {
+        println!("Creating table: {}", name);
+        println!("Columns: {}", columns.len());
+    }
+    _ => {}
+}
+```
+
+### peek
+
+Peeks at the current token without consuming it.
+
+```rust
+pub fn peek(&self) -> Option<&Token>
+```
+
+<ResponseField name="return" type="Option<&Token>">
+  Reference to current token, or `None` if at end of stream
+</ResponseField>
+
+### advance
+
+Moves to the next token in the stream.
+
+```rust
+pub fn advance(&mut self)
+```
+
+### consume
+
+Returns current token and advances to next position.
+
+```rust
+pub fn consume(&mut self) -> Option<Token>
+```
+
+<ResponseField name="return" type="Option<Token>">
+  The current token, or `None` if at end
+</ResponseField>
+
+### expect
+
+Consumes a token and verifies it matches the expected value.
+
+```rust
+pub fn expect(&mut self, expected: Token) -> io::Result<()>
+```
+
+<ParamField path="expected" type="Token" required>
+  The expected token
+</ParamField>
+
+<ResponseField name="return" type="io::Result<()>">
+  - `Ok(())` if token matches
+  - `Err` if token doesn't match or stream ends
+</ResponseField>
+
+## Statement Enum
+
+Represents all supported SQL statement types.
+
+```rust
+pub enum Statement {
+    CreateTable { name: String, columns: Vec<Column> },
+    Insert { table_name: String, values: Vec<Value> },
+    Select { table_name: String, columns: SelectColumns, where_clause: Option<Expr> },
+    Update { table_name: String, assignments: Vec<(String, Value)>, where_clause: Option<Expr> },
+    Delete { table_name: String, where_clause: Option<Expr> },
+    DropTable { name: String },
+}
+```
+
+### CreateTable
+
+Represents a `CREATE TABLE` statement.
+
+```rust
+Statement::CreateTable {
+    name: String,
+    columns: Vec<Column>,
+}
+```
+
+**Example SQL:**
+```sql
+CREATE TABLE users (
+    id INTEGER,
+    name TEXT,
+    active BOOLEAN
+);
+```
+
+### Insert
+
+Represents an `INSERT INTO` statement.
+
+```rust
+Statement::Insert {
+    table_name: String,
+    values: Vec<Value>,
+}
+```
+
+**Example SQL:**
+```sql
+INSERT INTO users VALUES (1, 'Alice', true);
+```
+
+### Select
+
+Represents a `SELECT` query.
+
+```rust
+Statement::Select {
+    table_name: String,
+    columns: SelectColumns,
+    where_clause: Option<Expr>,
+}
+```
+
+**Example SQL:**
+```sql
+-- All columns
+SELECT * FROM users;
+
+-- Specific columns
+SELECT id, name FROM users WHERE active = true;
+```
+
+### Update
+
+Represents an `UPDATE` statement.
+
+```rust
+Statement::Update {
+    table_name: String,
+    assignments: Vec<(String, Value)>,
+    where_clause: Option<Expr>,
+}
+```
+
+**Example SQL:**
+```sql
+UPDATE users SET name = 'Bob', active = false WHERE id = 1;
+```
+
+### Delete
+
+Represents a `DELETE` statement.
+
+```rust
+Statement::Delete {
+    table_name: String,
+    where_clause: Option<Expr>,
+}
+```
+
+**Example SQL:**
+```sql
+DELETE FROM users WHERE active = false;
+```
+
+### DropTable
+
+Represents a `DROP TABLE` statement.
+
+```rust
+Statement::DropTable {
+    name: String,
+}
+```
+
+**Example SQL:**
+```sql
+DROP TABLE users;
+```
+
+## SelectColumns Enum
+
+Specifies which columns to retrieve in a SELECT query.
+
+```rust
+pub enum SelectColumns {
+    All,
+    Specific(Vec<String>),
+}
+```
+
+<ParamField path="All" type="SelectColumns">
+  Select all columns (`SELECT *`)
+</ParamField>
+
+<ParamField path="Specific" type="SelectColumns">
+  Select named columns (`SELECT id, name`)
+</ParamField>
+
+## Expr Enum
+
+Represents expressions used in WHERE clauses.
+
+```rust
+pub enum Expr {
+    Literal(Value),
+    Column(String),
+    BinaryOp { left: Box<Expr>, op: BinaryOperator, right: Box<Expr> },
+}
+```
+
+### Literal
+
+A constant value (number, string, boolean, or NULL).
+
+```rust
+Expr::Literal(Value::Integer(42))
+Expr::Literal(Value::Text("Alice".to_string()))
+Expr::Literal(Value::Boolean(true))
+Expr::Literal(Value::Null)
+```
+
+### Column
+
+A reference to a table column.
+
+```rust
+Expr::Column("id".to_string())
+```
+
+### BinaryOp
+
+A binary operation combining two expressions.
+
+```rust
+Expr::BinaryOp {
+    left: Box::new(Expr::Column("age".to_string())),
+    op: BinaryOperator::GreaterThan,
+    right: Box::new(Expr::Literal(Value::Integer(18))),
+}
+```
+
+## BinaryOperator Enum
+
+Operators for combining expressions.
+
+```rust
+pub enum BinaryOperator {
+    // Comparison
+    Equals,
+    NotEquals,
+    LessThan,
+    GreaterThan,
+    LessOrEqual,
+    GreaterOrEqual,
+    // Logical
+    And,
+    Or,
+}
+```
+
+| Operator | SQL Symbol | Usage |
+|----------|------------|-------|
+| `Equals` | `=` | `id = 1` |
+| `NotEquals` | `!=` | `active != false` |
+| `LessThan` | `<` | `age < 30` |
+| `GreaterThan` | `>` | `score > 100` |
+| `LessOrEqual` | `<=` | `price <= 50` |
+| `GreaterOrEqual` | `>=` | `count >= 10` |
+| `And` | `AND` | `id = 1 AND active = true` |
+| `Or` | `OR` | `status = 'active' OR status = 'pending'` |
+
+## Expression Parsing
+
+The parser handles operator precedence correctly:
+
+**Precedence (highest to lowest):**
+1. Comparison operators
+2. AND
+3. OR
+
+**Example:**
+```sql
+-- Parsed as: (id = 1 AND age > 18) OR (name = 'Alice' AND active = true)
+SELECT * FROM users 
+WHERE id = 1 AND age > 18 OR name = 'Alice' AND active = true;
+```
+
+## Error Handling
+
+The parser returns descriptive errors:
+
+```rust
+// Missing semicolon
+let result = parser.parse(); // Err("Expected ';', found ...")
+
+// Invalid column name
+let result = parser.parse(); // Err("Expected column name")
+
+// Unexpected end of input
+let result = parser.parse(); // Err("Unexpected end of input")
+```
+
+## Complete Example
+
+```rust
+use hozondb::sql::{parser::Parser, tokenizer};
+
+let sql = r#"
+    SELECT id, name, email 
+    FROM users 
+    WHERE age >= 18 AND active = true;
+"#;
+
+// Tokenize
+let tokens = tokenizer::tokenize(sql)?;
+
+// Parse
+let mut parser = Parser::new(tokens);
+let statement = parser.parse()?;
+
+// Match statement type
+match statement {
+    Statement::Select { table_name, columns, where_clause } => {
+        println!("Table: {}", table_name);
+        
+        match columns {
+            SelectColumns::Specific(cols) => {
+                println!("Columns: {:?}", cols); // ["id", "name", "email"]
+            }
+            _ => {}
+        }
+        
+        if let Some(expr) = where_clause {
+            println!("Has WHERE clause");
+        }
+    }
+    _ => {}
+}
+```
+
+## Related Types
+
+- `Token` - Token types from the tokenizer
+- `Value` - Data values (Integer, Text, Boolean, Null)
+- `Column` - Table column definitions
+- [Executor](/api/executor) - Executes parsed statements

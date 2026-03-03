@@ -1,0 +1,237 @@
+---
+title: 'Query Optimization'
+description: 'Tips and strategies for optimizing HozonDB queries and database performance'
+---
+
+Learn how to optimize your HozonDB queries and improve database performance based on insights from the benchmark suite.
+
+## Understanding Query Performance
+
+HozonDB uses a page-based storage system similar to SQLite. Understanding how queries interact with pages is key to optimization.
+
+### Key Performance Metrics
+
+When evaluating query performance, focus on these metrics:
+
+- **Pages Read**: Fewer page reads indicate better I/O efficiency
+- **Rows Scanned**: Lower scan counts mean more selective queries
+- **Duration**: Overall execution time in milliseconds
+
+## SELECT Query Optimization
+
+### Use WHERE Clauses Effectively
+
+Without proper filtering, queries must scan the entire table:
+
+```sql
+-- Poor: Full table scan
+SELECT * FROM users;
+-- Scans all rows, reads all pages
+
+-- Better: Selective WHERE clause
+SELECT * FROM users WHERE id = 1;
+-- Stops early when match is found
+```
+
+<Tip>
+  Based on benchmark data, a full table scan of 10,000 rows reads ~125 pages and scans all 10,000 rows, while a targeted query for the first row reads just 1 page and scans 1 row.
+</Tip>
+
+### Early Termination
+
+HozonDB's executor can terminate early when finding matching rows. Place the most selective conditions first:
+
+```sql
+-- Optimized: Most selective condition first
+SELECT * FROM users WHERE id = 100;
+```
+
+### Position Matters
+
+Benchmark results show that row position affects query performance:
+
+- **First row queries**: Fastest (1 page read, 1 row scanned)
+- **Middle row queries**: Moderate (63 pages read, 5000 rows scanned for 10K dataset)
+- **Last row queries**: Slowest (125 pages read, 10000 rows scanned)
+
+This is because HozonDB performs sequential scans without indexes.
+
+## INSERT Optimization
+
+### Batch Considerations
+
+Single inserts are fast but have overhead:
+
+```sql
+-- Each INSERT is a separate operation
+INSERT INTO users VALUES (1, 'Alice', 25);
+INSERT INTO users VALUES (2, 'Bob', 30);
+INSERT INTO users VALUES (3, 'Charlie', 35);
+```
+
+From benchmarks:
+- Single insert: ~0.18 ms, 2 pages read, 1 page written
+- Each insert requires page I/O overhead
+
+<Note>
+  Currently, HozonDB doesn't support multi-value INSERT statements. Future versions may add this feature for better bulk insert performance.
+</Note>
+
+## UPDATE Optimization
+
+### Selective Updates
+
+Update only the rows you need:
+
+```sql
+-- Efficient: Single row update
+UPDATE users SET age = 99 WHERE id = 1;
+-- ~0.15 ms, 1 page read, 1 page written, 1 row modified
+
+-- Less efficient: Bulk update (10%)
+UPDATE users SET age = 99 WHERE id <= 1000;
+-- ~52 ms, 125 pages read, 13 pages written, 1000 rows modified
+```
+
+### Understanding Write Amplification
+
+Bulk updates (10% of 10K rows) show:
+- 125 pages read (must scan to find matching rows)
+- 13 pages written (only modified pages are written)
+- Write amplification: ~13x (13 pages written for 1000 rows)
+
+## DELETE Optimization
+
+### Targeted Deletes
+
+Like updates, deletes benefit from selectivity:
+
+```sql
+-- Fast: Delete single row
+DELETE FROM users WHERE id = 9999;
+-- ~0.14 ms, 1 page read, 1 page written
+
+-- Slower: Bulk delete (10%)
+DELETE FROM users WHERE id <= 1000;
+-- ~48 ms, 125 pages read, 13 pages written
+```
+
+### Scan Cost
+
+Even bulk deletes must scan the entire table to find matching rows since HozonDB lacks indexes.
+
+## General Optimization Strategies
+
+### 1. Minimize Full Table Scans
+
+Always use WHERE clauses when possible:
+
+```sql
+-- Avoid
+SELECT * FROM users;
+
+-- Prefer
+SELECT * FROM users WHERE condition;
+```
+
+### 2. Understand Sequential Scan Behavior
+
+HozonDB currently uses sequential scans for all queries. This means:
+- Queries search from the beginning of the table
+- Early rows are found faster than later rows
+- Non-existent rows require full table scans
+
+### 3. Keep Tables Compact
+
+Regularly remove unnecessary data:
+
+```sql
+DELETE FROM logs WHERE created_at < '2025-01-01';
+```
+
+Smaller tables = fewer pages = faster scans.
+
+### 4. Use Appropriate Data Types
+
+Choose the right data type for your columns:
+
+```sql
+CREATE TABLE users (
+  id INTEGER,        -- Efficient for numeric IDs
+  name TEXT,         -- For variable-length strings
+  age INTEGER,       -- For numeric values
+  is_active BOOLEAN  -- For true/false flags
+);
+```
+
+## Performance Testing
+
+Use the built-in benchmark tool to test your database:
+
+```bash
+hozondb> .open mydb.hdb
+hozondb> .benchmark 10000
+```
+
+This helps you:
+- Establish baseline performance
+- Identify slow operations
+- Track performance over time
+- Compare different database sizes
+
+## Limitations and Future Improvements
+
+### Current Limitations
+
+1. **No indexes**: All queries use sequential scans
+2. **No query planner**: Execution follows a simple strategy
+3. **No statistics**: No query cost estimation
+4. **Single-value inserts**: No bulk insert syntax
+
+### Understanding the Trade-offs
+
+HozonDB is designed as a learning database with simplicity in mind. Performance characteristics:
+
+- ✅ Good for small to medium datasets (< 100K rows)
+- ✅ Simple, predictable performance model
+- ✅ Low overhead for writes
+- ⚠️ Linear scan time increases with table size
+- ⚠️ No optimization for complex queries
+
+## Benchmarking Your Workload
+
+For workload-specific optimization:
+
+1. Run benchmarks at your expected data size:
+   ```bash
+   .benchmark 50000
+   ```
+
+2. Note the metrics for operations you use most
+
+3. Estimate your performance:
+   - Scale linearly with row count for full scans
+   - Account for position-dependent query performance
+   - Factor in write amplification for bulk operations
+
+## Real-World Example
+
+Optimizing a user lookup system:
+
+```sql
+-- Initial query (slow for large tables)
+SELECT * FROM users WHERE name = 'Alice';
+-- Must scan entire table
+
+-- Optimized: Use ID when possible
+SELECT * FROM users WHERE id = 42;
+-- Can terminate early if ID is unique
+
+-- Best practice: Keep frequently accessed data in separate, smaller tables
+CREATE TABLE active_users AS 
+SELECT * FROM users WHERE last_login > '2025-01-01';
+```
+
+<Info>
+  For more details on benchmark metrics, see the [Benchmarking](/performance/benchmarking) guide.
+</Info>

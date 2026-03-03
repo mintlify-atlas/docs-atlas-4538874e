@@ -1,0 +1,234 @@
+---
+title: DROP TABLE
+description: Remove tables from the database
+---
+
+The `DROP TABLE` statement removes a table and all its data from the database.
+
+## Syntax
+
+```sql
+DROP TABLE table_name;
+```
+
+## Parameters
+
+- `table_name` - Name of the table to remove
+
+<Warning>
+DROP TABLE permanently deletes the table and all its data. This operation cannot be undone.
+</Warning>
+
+## Examples
+
+### Basic Drop
+
+Remove a table:
+
+```sql
+DROP TABLE users;
+```
+
+From the test suite (src/sql/parser.rs:1009-1021):
+
+```sql
+DROP TABLE users;
+```
+
+### Complete Workflow
+
+```sql
+-- Create table
+CREATE TABLE temp_data (id INTEGER, value TEXT);
+
+-- Use the table
+INSERT INTO temp_data VALUES (1, 'test');
+SELECT * FROM temp_data;
+
+-- Remove when done
+DROP TABLE temp_data;
+```
+
+## Implementation Details
+
+From the parser (src/sql/parser.rs:415-424):
+
+```rust
+DropTable {
+    name: String,
+}
+```
+
+The parser:
+1. Expects `DROP TABLE` keywords
+2. Parses table name (identifier)
+3. Expects semicolon
+
+## Execution Process
+
+From the executor (src/sql/executor.rs:471-485):
+
+1. Verifies the table exists
+2. Collects all pages in the table's page chain
+3. Removes table from catalog
+4. Frees all associated pages
+5. Returns success message
+
+```rust
+fn execute_drop_table(&mut self, table_name: String) -> io::Result<ExecutionResult> {
+    let (first_page, _) = self.get_table_first_page_and_cols(&table_name)?;
+    let page_chain = self.collect_page_chain(first_page)?;
+    self.catalog.drop_table(&table_name)?;
+    for page in page_chain {
+        self.catalog.free_page(page)?;
+    }
+    Ok(ExecutionResult::Success {
+        message: format!("{} table successfully dropped", table_name),
+    })
+}
+```
+
+## Success Message
+
+On successful drop, HozonDB returns:
+
+```
+users table successfully dropped
+```
+
+## Storage Reclamation
+
+DROP TABLE frees all pages used by the table:
+
+- Schema page
+- All data pages in the table's page chain
+- Metadata entries
+
+This makes the space available for reuse by other tables.
+
+## Error Handling
+
+### Nonexistent Table
+
+Attempting to drop a table that doesn't exist returns an error:
+
+```sql
+DROP TABLE nonexistent;
+-- Error: Table 'nonexistent' does not exist
+```
+
+## Common Use Cases
+
+### Temporary Tables
+
+```sql
+-- Create temporary table for processing
+CREATE TABLE temp_results (id INTEGER, result TEXT);
+
+-- Use it
+INSERT INTO temp_results VALUES (1, 'processed');
+SELECT * FROM temp_results;
+
+-- Clean up
+DROP TABLE temp_results;
+```
+
+### Schema Changes
+
+Since HozonDB doesn't support ALTER TABLE, you can drop and recreate:
+
+```sql
+-- Old schema
+CREATE TABLE users (id INTEGER, name TEXT);
+
+-- Need to add a column? Drop and recreate
+DROP TABLE users;
+CREATE TABLE users (id INTEGER, name TEXT, email TEXT);
+```
+
+<Warning>
+Dropping and recreating a table deletes all existing data. Export data first if you need to preserve it.
+</Warning>
+
+### Test Cleanup
+
+```sql
+-- Test setup
+CREATE TABLE test_users (id INTEGER);
+INSERT INTO test_users VALUES (1);
+-- Run tests...
+
+-- Cleanup
+DROP TABLE test_users;
+```
+
+## Common Errors
+
+<Warning>
+**Missing TABLE Keyword**
+
+```sql
+-- ❌ Wrong
+DROP users;
+
+-- ✓ Correct
+DROP TABLE users;
+```
+</Warning>
+
+<Warning>
+**Missing Semicolon**
+
+```sql
+-- ❌ Wrong
+DROP TABLE users
+
+-- ✓ Correct
+DROP TABLE users;
+```
+</Warning>
+
+## Safety Considerations
+
+<Note>
+**Verify Before Dropping**
+
+Check the table contents before dropping:
+
+```sql
+-- Check what's in the table
+SELECT * FROM users;
+
+-- Verify it's the right table
+-- Then drop if certain
+DROP TABLE users;
+```
+</Note>
+
+<Warning>
+**No Confirmation Prompt**
+
+HozonDB executes DROP TABLE immediately without asking for confirmation. Be certain before executing.
+</Warning>
+
+## Alternatives
+
+### Delete All Rows Instead
+
+If you want to keep the table structure but remove all data:
+
+```sql
+-- Removes all rows, keeps the table
+DELETE FROM users;
+
+-- vs
+
+-- Removes table entirely
+DROP TABLE users;
+```
+
+## See Also
+
+- [CREATE TABLE](/sql/create-table) - Create new tables
+- [DELETE](/sql/delete) - Remove rows without dropping table
+- [Data Types](/sql/data-types) - Understand table schemas

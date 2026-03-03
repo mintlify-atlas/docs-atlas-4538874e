@@ -1,0 +1,449 @@
+---
+title: 'PageManager'
+description: 'Low-level page-based storage management for HozonDB'
+---
+
+The `PageManager` struct handles page-based storage operations, providing the foundation for HozonDB's persistence layer.
+
+## Constants
+
+```rust
+pub const PAGE_SIZE: usize = 4096;
+pub const HEADER_SIZE: usize = 12;
+pub const PAGE_METADATA_SIZE: usize = 9;
+pub const PAGE_DATA_START: usize = 9;
+pub const MAGIC_NUMBER: u32 = 0x484F5A4E; // "HOZN"
+pub type PageId = u32;
+```
+
+<ParamField path="PAGE_SIZE" type="usize" default="4096">
+  Size of each page in bytes (4 KB)
+</ParamField>
+
+<ParamField path="HEADER_SIZE" type="usize" default="12">
+  Size of database file header in bytes
+</ParamField>
+
+<ParamField path="PAGE_METADATA_SIZE" type="usize" default="9">
+  Size of per-page metadata in bytes
+</ParamField>
+
+<ParamField path="PAGE_DATA_START" type="usize" default="9">
+  Offset where page data begins (after metadata)
+</ParamField>
+
+<ParamField path="MAGIC_NUMBER" type="u32" default="0x484F5A4E">
+  Magic number identifying valid HozonDB files ("HOZN")
+</ParamField>
+
+## Struct Definition
+
+```rust
+pub struct PageManager {
+    file: Mutex<File>,
+    lock_path: PathBuf,
+    num_pages: u32,
+    first_free_page: Option<PageId>,
+}
+```
+
+<ParamField path="file" type="Mutex<File>">
+  Thread-safe file handle for the database file
+</ParamField>
+
+<ParamField path="lock_path" type="PathBuf">
+  Path to lock file (prevents concurrent access)
+</ParamField>
+
+<ParamField path="num_pages" type="u32">
+  Total number of pages in the database
+</ParamField>
+
+<ParamField path="first_free_page" type="Option<PageId>">
+  Head of the free page linked list (for reusing deleted pages)
+</ParamField>
+
+## PageMetadata Struct
+
+Metadata stored at the beginning of each page.
+
+```rust
+pub struct PageMetadata {
+    pub is_full: bool,
+    pub last_offset: usize,
+    pub num_rows: usize,
+    pub next_page: Option<u32>,
+}
+```
+
+<ParamField path="is_full" type="bool">
+  Whether the page is full and cannot accept more data
+</ParamField>
+
+<ParamField path="last_offset" type="usize">
+  Byte offset of the end of data in this page
+</ParamField>
+
+<ParamField path="num_rows" type="usize">
+  Number of rows stored in this page
+</ParamField>
+
+<ParamField path="next_page" type="Option<u32>">
+  Page ID of the next page in the chain (for multi-page tables)
+</ParamField>
+
+## Methods
+
+### new
+
+Opens an existing database or creates a new one.
+
+```rust
+pub fn new(path: &str) -> io::Result<Self>
+```
+
+<ParamField path="path" type="&str" required>
+  Path to the database file (e.g., "mydb.hdb")
+</ParamField>
+
+<ResponseField name="return" type="io::Result<PageManager>">
+  - `Ok(PageManager)` - Successfully opened/created database
+  - `Err` - File I/O error or lock acquisition failure
+</ResponseField>
+
+**Behavior:**
+- Creates database file if it doesn't exist
+- Validates magic number on existing files
+- Acquires exclusive lock (`.hdb.lock` file)
+- Initializes with 1 page (header page)
+
+**Example:**
+```rust
+use hozondb::storage::page::PageManager;
+
+// Create new database
+let mut pm = PageManager::new("mydb.hdb")?;
+
+// Attempt concurrent access (fails)
+let pm2 = PageManager::new("mydb.hdb"); // Err: WouldBlock
+```
+
+### allocate_page
+
+Allocates a new page and returns its ID.
+
+```rust
+pub fn allocate_page(&mut self) -> io::Result<PageId>
+```
+
+<ResponseField name="return" type="io::Result<PageId>">
+  ID of the allocated page (1-indexed, page 0 is reserved for headers)
+</ResponseField>
+
+**Behavior:**
+- Reuses freed pages if available (LIFO order)
+- Extends file if no free pages exist
+- Initializes page metadata
+
+**Example:**
+```rust
+let page1 = pm.allocate_page()?; // Returns 1
+let page2 = pm.allocate_page()?; // Returns 2
+println!("Total pages: {}", pm.num_pages()); // 3 (including header)
+```
+
+### free_page
+
+Adds a page to the free list for reuse.
+
+```rust
+pub fn free_page(&mut self, page_id: PageId) -> io::Result<()>
+```
+
+<ParamField path="page_id" type="PageId" required>
+  ID of the page to free
+</ParamField>
+
+**Behavior:**
+- Adds page to head of free list (LIFO)
+- Page can be reused by next `allocate_page()` call
+- Does not shrink file size
+
+**Example:**
+```rust
+let page = pm.allocate_page()?; // 1
+pm.free_page(page)?;
+
+let reused = pm.allocate_page()?; // 1 (reused)
+assert_eq!(reused, page);
+```
+
+### write_page
+
+Writes data to a specific page.
+
+```rust
+pub fn write_page(&mut self, page_id: PageId, data: &[u8]) -> io::Result<()>
+```
+
+<ParamField path="page_id" type="PageId" required>
+  ID of the page to write to
+</ParamField>
+
+<ParamField path="data" type="&[u8]" required>
+  Data to write (up to PAGE_SIZE bytes, automatically padded with zeros)
+</ParamField>
+
+<ResponseField name="return" type="io::Result<()>">
+  - `Ok(())` on success
+  - `Err` if page_id is invalid or data exceeds PAGE_SIZE
+</ResponseField>
+
+**Example:**
+```rust
+let page = pm.allocate_page()?;
+let data = b"Hello, HozonDB!";
+pm.write_page(page, data)?;
+```
+
+### read_page
+
+Reads data from a specific page.
+
+```rust
+pub fn read_page(&self, page_id: PageId) -> io::Result<[u8; PAGE_SIZE]>
+```
+
+<ParamField path="page_id" type="PageId" required>
+  ID of the page to read
+</ParamField>
+
+<ResponseField name="return" type="io::Result<[u8; PAGE_SIZE]>">
+  Full page contents (4096 bytes)
+</ResponseField>
+
+**Example:**
+```rust
+let page_data = pm.read_page(page_id)?;
+let actual_data = &page_data[PAGE_DATA_START..]; // Skip metadata
+```
+
+### read_page_metadata
+
+Reads only the metadata from a page.
+
+```rust
+pub fn read_page_metadata(&self, page_id: PageId) -> io::Result<PageMetadata>
+```
+
+<ParamField path="page_id" type="PageId" required>
+  ID of the page
+</ParamField>
+
+<ResponseField name="return" type="io::Result<PageMetadata>">
+  Parsed metadata structure
+</ResponseField>
+
+**Example:**
+```rust
+let meta = pm.read_page_metadata(page_id)?;
+println!("Rows: {}", meta.num_rows);
+println!("Full: {}", meta.is_full);
+println!("Next page: {:?}", meta.next_page);
+```
+
+### update_page_metadata
+
+Updates the metadata section of a page.
+
+```rust
+pub fn update_page_metadata(
+    &mut self,
+    page_id: PageId,
+    metadata: &PageMetadata,
+) -> io::Result<()>
+```
+
+<ParamField path="page_id" type="PageId" required>
+  ID of the page to update
+</ParamField>
+
+<ParamField path="metadata" type="&PageMetadata" required>
+  New metadata to write
+</ParamField>
+
+**Example:**
+```rust
+let mut meta = pm.read_page_metadata(page_id)?;
+meta.num_rows += 1;
+meta.last_offset += row_size;
+pm.update_page_metadata(page_id, &meta)?;
+```
+
+### read_metadata_from_buffer
+
+Parses metadata from a page buffer (static method).
+
+```rust
+pub fn read_metadata_from_buffer(page_data: &[u8; PAGE_SIZE]) -> PageMetadata
+```
+
+<ParamField path="page_data" type="&[u8; PAGE_SIZE]" required>
+  Page buffer to parse
+</ParamField>
+
+<ResponseField name="return" type="PageMetadata">
+  Parsed metadata
+</ResponseField>
+
+### update_metadata_in_buffer
+
+Writes metadata into a page buffer (static method).
+
+```rust
+pub fn update_metadata_in_buffer(page_data: &mut [u8; PAGE_SIZE], metadata: &PageMetadata)
+```
+
+<ParamField path="page_data" type="&mut [u8; PAGE_SIZE]" required>
+  Page buffer to modify
+</ParamField>
+
+<ParamField path="metadata" type="&PageMetadata" required>
+  Metadata to encode
+</ParamField>
+
+### num_pages
+
+Returns the total number of pages in the database.
+
+```rust
+pub fn num_pages(&self) -> u32
+```
+
+<ResponseField name="return" type="u32">
+  Total page count (including header page)
+</ResponseField>
+
+### first_free_page
+
+Returns the head of the free page list.
+
+```rust
+pub fn first_free_page(&self) -> Option<PageId>
+```
+
+<ResponseField name="return" type="Option<PageId>">
+  ID of first free page, or `None` if no free pages
+</ResponseField>
+
+## File Structure
+
+### Database Header (Page 0, first 12 bytes)
+
+| Offset | Size | Description |
+|--------|------|-------------|
+| 0 | 4 | Magic number (0x484F5A4E) |
+| 4 | 4 | Total number of pages |
+| 8 | 4 | First free page ID (or 0xFFFFFFFF if none) |
+
+### Page Metadata (first 9 bytes of each page)
+
+| Offset | Size | Description |
+|--------|------|-------------|
+| 0 | 1 | is_full flag (0 or 1) |
+| 1 | 2 | last_offset (u16) |
+| 3 | 2 | num_rows (u16) |
+| 5 | 4 | next_page (u32, 0xFFFFFFFF if none) |
+
+### Page Data (bytes 9-4095)
+
+Actual row data starts at offset 9 and continues to the end of the page.
+
+## Concurrency Control
+
+PageManager uses a lock file to prevent concurrent access:
+
+```rust
+// First connection acquires lock
+let pm1 = PageManager::new("db.hdb")?; // OK
+
+// Second connection fails
+let pm2 = PageManager::new("db.hdb"); // Err: WouldBlock
+
+// Lock released when dropped
+drop(pm1);
+let pm3 = PageManager::new("db.hdb"); // OK now
+```
+
+Lock file: `{database_path}.lock` (e.g., `db.hdb.lock`)
+
+## Free Page Management
+
+Freed pages form a linked list:
+
+```rust
+// Allocate 3 pages
+let p1 = pm.allocate_page()?; // 1
+let p2 = pm.allocate_page()?; // 2
+let p3 = pm.allocate_page()?; // 3
+
+// Free in order: p1, p2, p3
+pm.free_page(p1)?;
+pm.free_page(p2)?;
+pm.free_page(p3)?;
+
+// Free list: 3 → 2 → 1 → NULL (LIFO)
+
+// Reallocate in LIFO order
+let r1 = pm.allocate_page()?; // 3
+let r2 = pm.allocate_page()?; // 2
+let r3 = pm.allocate_page()?; // 1
+```
+
+## Example: Multi-Page Table
+
+```rust
+use hozondb::storage::page::{PageManager, PageMetadata, PAGE_DATA_START, PAGE_SIZE};
+
+let mut pm = PageManager::new("table.hdb")?;
+
+// Allocate first page for table
+let page1 = pm.allocate_page()?;
+let mut page1_data = [0u8; PAGE_SIZE];
+
+// Write some rows...
+let row_data = b"row1,row2,row3";
+page1_data[PAGE_DATA_START..PAGE_DATA_START + row_data.len()]
+    .copy_from_slice(row_data);
+
+// Page is full, need another page
+let page2 = pm.allocate_page()?;
+
+// Link pages
+let meta = PageMetadata {
+    is_full: true,
+    last_offset: PAGE_SIZE,
+    num_rows: 3,
+    next_page: Some(page2),
+};
+
+PageManager::update_metadata_in_buffer(&mut page1_data, &meta);
+pm.write_page(page1, &page1_data)?;
+
+// Traverse page chain
+let mut current = page1;
+loop {
+    let meta = pm.read_page_metadata(current)?;
+    println!("Page {} has {} rows", current, meta.num_rows);
+    
+    match meta.next_page {
+        Some(next) => current = next,
+        None => break,
+    }
+}
+```
+
+## Related Types
+
+- [TableCatalog](/api/table-catalog) - Higher-level table management
+- [Executor](/api/executor) - Uses PageManager via TableCatalog

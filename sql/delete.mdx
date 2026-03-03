@@ -1,0 +1,278 @@
+---
+title: DELETE
+description: Remove rows from tables with the DELETE statement
+---
+
+The `DELETE` statement removes rows from a table, optionally filtered by a WHERE clause.
+
+## Syntax
+
+```sql
+-- Delete all rows
+DELETE FROM table_name;
+
+-- Delete specific rows
+DELETE FROM table_name WHERE condition;
+```
+
+## Parameters
+
+- `table_name` - Name of the table to delete from
+- `WHERE condition` - Optional filter to select which rows to delete
+
+<Warning>
+DELETE without a WHERE clause removes ALL rows from the table. Use with extreme caution!
+</Warning>
+
+## Examples
+
+### Delete All Rows
+
+Remove all rows from a table:
+
+```sql
+DELETE FROM users;
+```
+
+From the test suite (src/sql/parser.rs:1024-1040):
+
+```sql
+DELETE FROM users;
+```
+
+### Delete with WHERE Clause
+
+Remove specific rows based on a condition:
+
+```sql
+DELETE FROM users WHERE id = 1;
+```
+
+From the test suite (src/sql/parser.rs:1043-1068):
+
+```sql
+DELETE FROM users WHERE id = 1;
+```
+
+### Delete by Text Match
+
+```sql
+DELETE FROM users WHERE name = 'Alice';
+```
+
+### Delete by Comparison
+
+```sql
+-- Delete old records
+DELETE FROM logs WHERE timestamp < 1000000;
+
+-- Delete inactive users
+DELETE FROM users WHERE active = false;
+
+-- Delete high value items
+DELETE FROM products WHERE price >= 1000;
+```
+
+### Complex WHERE Conditions
+
+Use AND/OR operators for complex filtering:
+
+```sql
+-- Delete inactive users under 18
+DELETE FROM users WHERE age < 18 AND active = false;
+
+-- Delete specific IDs
+DELETE FROM users WHERE id = 1 OR id = 2 OR id = 3;
+
+-- Complex condition
+DELETE FROM orders 
+WHERE status = 'cancelled' AND created_date < 20240101 
+   OR total_amount = 0;
+```
+
+See [WHERE Clauses](/sql/where-clauses) for detailed filtering examples.
+
+## Implementation Details
+
+From the parser (src/sql/parser.rs:426-449):
+
+```rust
+Delete {
+    table_name: String,
+    where_clause: Option<Expr>,
+}
+```
+
+The parser:
+1. Expects `DELETE FROM` keywords
+2. Parses table name
+3. Optionally parses WHERE clause
+4. Expects semicolon
+
+## Execution Process
+
+From the executor (src/sql/executor.rs:487-542):
+
+1. Reads all rows from the table
+2. Evaluates WHERE clause for each row
+3. Keeps rows that don't match the condition
+4. Writes remaining rows back to storage
+5. Frees unused pages if data shrinks
+6. Returns count of deleted rows
+
+## Success Messages
+
+On successful deletion, HozonDB returns:
+
+```
+1 row deleted.
+```
+
+Or for multiple rows:
+
+```
+5 rows deleted.
+```
+
+For zero matches:
+
+```
+0 rows deleted.
+```
+
+## Examples with Results
+
+### Delete and Verify
+
+```sql
+CREATE TABLE users (id INTEGER, name TEXT);
+INSERT INTO users VALUES (1, 'Alice');
+INSERT INTO users VALUES (2, 'Bob');
+INSERT INTO users VALUES (3, 'Charlie');
+
+-- Delete one row
+DELETE FROM users WHERE id = 2;
+-- Returns: 1 row deleted.
+
+-- Verify
+SELECT * FROM users;
+-- Returns: 2 rows (id=1 and id=3)
+```
+
+### Delete Multiple Rows
+
+```sql
+-- Delete all users with age < 18
+DELETE FROM users WHERE age < 18;
+-- Returns: 3 rows deleted.
+```
+
+### No Matching Rows
+
+```sql
+DELETE FROM users WHERE id = 999;
+-- Returns: 0 rows deleted.
+```
+
+### Delete from Empty Table
+
+```sql
+CREATE TABLE temp (id INTEGER);
+DELETE FROM temp;
+-- Returns: 0 rows deleted.
+```
+
+## Common Patterns
+
+### Delete by ID
+
+```sql
+DELETE FROM users WHERE id = 42;
+```
+
+### Delete by Status
+
+```sql
+DELETE FROM orders WHERE status = 'cancelled';
+```
+
+### Delete by Date Range
+
+```sql
+DELETE FROM logs WHERE date < 20240101;
+```
+
+### Delete by NULL
+
+```sql
+DELETE FROM users WHERE email = NULL;
+```
+
+### Conditional Mass Delete
+
+```sql
+DELETE FROM sessions WHERE expired = true;
+```
+
+## Safety Considerations
+
+<Warning>
+**Accidental Mass Deletion**
+
+Always double-check your WHERE clause before executing DELETE:
+
+```sql
+-- ❌ DANGEROUS: Deletes everything
+DELETE FROM users;
+
+-- ✓ Safe: Deletes specific rows
+DELETE FROM users WHERE id = 1;
+```
+</Warning>
+
+<Note>
+**Verify Before Delete**
+
+Run a SELECT with the same WHERE clause first to preview what will be deleted:
+
+```sql
+-- Preview
+SELECT * FROM users WHERE age < 18;
+
+-- If results look correct, then delete
+DELETE FROM users WHERE age < 18;
+```
+</Note>
+
+## Common Errors
+
+<Warning>
+**Missing FROM Keyword**
+
+```sql
+-- ❌ Wrong
+DELETE users WHERE id = 1;
+
+-- ✓ Correct
+DELETE FROM users WHERE id = 1;
+```
+</Warning>
+
+<Warning>
+**Missing Semicolon**
+
+```sql
+-- ❌ Wrong
+DELETE FROM users WHERE id = 1
+
+-- ✓ Correct
+DELETE FROM users WHERE id = 1;
+```
+</Warning>
+
+## See Also
+
+- [SELECT](/sql/select) - Preview rows before deleting
+- [WHERE Clauses](/sql/where-clauses) - Filter rows to delete
+- [UPDATE](/sql/update) - Modify rows instead of deleting
+- [DROP TABLE](/sql/drop-table) - Remove entire table

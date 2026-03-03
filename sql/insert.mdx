@@ -1,0 +1,160 @@
+---
+title: INSERT INTO
+description: Insert new rows into tables
+---
+
+The `INSERT INTO` statement adds new rows to an existing table.
+
+## Syntax
+
+```sql
+INSERT INTO table_name VALUES (value1, value2, ...);
+```
+
+## Parameters
+
+- `table_name` - Name of the table to insert into
+- `value1, value2, ...` - Values for each column in the table
+
+<Note>
+The number of values must match the number of columns in the table exactly.
+</Note>
+
+## Value Literals
+
+- **Integer literals**: `42`, `-100`, `0`
+- **String literals**: `'Alice'`, `'hello world'` (single quotes)
+- **Boolean literals**: `true`, `false`
+- **Null literal**: `NULL`
+
+## Examples
+
+### Basic Insert
+
+Insert a row with integer and text values:
+
+```sql
+CREATE TABLE users (id INTEGER, name TEXT);
+INSERT INTO users VALUES (1, 'Alice');
+```
+
+From the test suite (src/sql/parser.rs:563-576):
+
+```sql
+INSERT INTO users VALUES (1, 'Alice', true);
+```
+
+### Multiple Data Types
+
+Insert values of different types:
+
+```sql
+CREATE TABLE records (
+  id INTEGER,
+  description TEXT,
+  active BOOLEAN,
+  optional NULL
+);
+
+INSERT INTO records VALUES (42, 'hello', true, NULL);
+```
+
+### Inserting NULL Values
+
+<Note>
+NULL can be inserted into any column type:
+</Note>
+
+```sql
+CREATE TABLE users (id INTEGER, name TEXT);
+INSERT INTO users VALUES (NULL, NULL);
+```
+
+### Negative Numbers
+
+Integer columns support negative values:
+
+```sql
+CREATE TABLE accounts (id INTEGER, balance INTEGER);
+INSERT INTO accounts VALUES (1, -100);
+```
+
+## Type Validation
+
+HozonDB validates that inserted values match the column data types:
+
+```sql
+CREATE TABLE users (id INTEGER, name TEXT);
+
+-- ✓ Correct types
+INSERT INTO users VALUES (1, 'Alice');
+
+-- ❌ Error: type mismatch
+INSERT INTO users VALUES ('not a number', 'Alice');
+```
+
+From the executor (src/sql/executor.rs:291-303), the database validates:
+1. Value count matches column count
+2. Each value type matches the column's data type
+3. NULL is accepted for any column type
+
+## Column Count Validation
+
+<Warning>
+The number of values must exactly match the number of columns:
+
+```sql
+CREATE TABLE users (id INTEGER, name TEXT);
+
+-- ❌ Error: expected 2 values, got 3
+INSERT INTO users VALUES (1, 'Alice', true);
+
+-- ✓ Correct: 2 values for 2 columns
+INSERT INTO users VALUES (1, 'Alice');
+```
+</Warning>
+
+## Multiple Inserts
+
+You can insert multiple rows by executing multiple INSERT statements:
+
+```sql
+CREATE TABLE users (id INTEGER, name TEXT);
+INSERT INTO users VALUES (1, 'Alice');
+INSERT INTO users VALUES (2, 'Bob');
+INSERT INTO users VALUES (3, 'Charlie');
+```
+
+## Implementation Details
+
+From the parser source (src/sql/parser.rs:215-261):
+
+- The parser expects `INSERT INTO` keywords
+- Table name must be a valid identifier
+- `VALUES` keyword is required
+- Values must be enclosed in parentheses
+- Values are separated by commas
+- Statement must end with a semicolon
+
+```rust
+// Statement enum from source
+Insert {
+    table_name: String,
+    values: Vec<Value>,
+}
+```
+
+## Success Message
+
+On successful insertion, HozonDB returns:
+
+```
+1 row inserted.
+```
+
+## See Also
+
+- [CREATE TABLE](/sql/create-table) - Define tables before inserting
+- [SELECT](/sql/select) - Query inserted data
+- [UPDATE](/sql/update) - Modify existing rows
+- [Data Types](/sql/data-types) - Understand value types

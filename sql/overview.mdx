@@ -1,0 +1,93 @@
+---
+title: SQL Support Overview
+description: Overview of SQL capabilities in HozonDB
+---
+
+HozonDB provides comprehensive SQL support for creating tables, inserting data, querying, updating, and deleting records. The SQL implementation is built from scratch with a custom parser and executor.
+
+## Supported Statements
+
+HozonDB supports the following SQL statements:
+
+- **CREATE TABLE** - Define new tables with columns and data types
+- **INSERT INTO** - Add new rows to tables
+- **SELECT** - Query data with column selection and filtering
+- **UPDATE** - Modify existing rows
+- **DELETE** - Remove rows from tables
+- **DROP TABLE** - Remove tables entirely
+
+## Supported Data Types
+
+HozonDB supports four data types:
+
+- **INTEGER** - 32-bit signed integers (i32)
+- **TEXT** - Variable-length UTF-8 strings
+- **BOOLEAN** - True/false values
+- **NULL** - Special null type (NULL can be stored in any column)
+
+See [Data Types](/sql/data-types) for detailed information.
+
+## WHERE Clause Support
+
+All query, update, and delete operations support WHERE clauses with:
+
+### Comparison Operators
+- `=` (equals)
+- `!=` (not equals)
+- `<` (less than)
+- `>` (greater than)
+- `<=` (less than or equal)
+- `>=` (greater than or equal)
+
+### Logical Operators
+- `AND` - Logical conjunction
+- `OR` - Logical disjunction
+
+Operator precedence: `AND` has higher precedence than `OR`.
+
+See [WHERE Clauses](/sql/where-clauses) for examples.
+
+## Statement Termination
+
+<Warning>
+All SQL statements must end with a semicolon (`;`). Statements without semicolons will result in a parse error.
+</Warning>
+
+## Example Usage
+
+```sql
+-- Create a table
+CREATE TABLE users (id INTEGER, name TEXT, active BOOLEAN);
+
+-- Insert data
+INSERT INTO users VALUES (1, 'Alice', true);
+
+-- Query data
+SELECT * FROM users WHERE active = true;
+
+-- Update data
+UPDATE users SET active = false WHERE id = 1;
+
+-- Delete data
+DELETE FROM users WHERE active = false;
+
+-- Drop table
+DROP TABLE users;
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="CREATE TABLE" icon="table" href="/sql/create-table">
+    Learn how to define tables and columns
+  </Card>
+  <Card title="INSERT" icon="plus" href="/sql/insert">
+    Add data to your tables
+  </Card>
+  <Card title="SELECT" icon="magnifying-glass" href="/sql/select">
+    Query and retrieve data
+  </Card>
+  <Card title="Data Types" icon="database" href="/sql/data-types">
+    Understand supported data types
+  </Card>
+</CardGroup>

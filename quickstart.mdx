@@ -1,80 +1,315 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get started with HozonDB in under 5 minutes
 ---
 
-## Get started in three steps
+# Quickstart Guide
 
-Get your documentation site running locally and make your first customization.
+This guide will help you get HozonDB up and running in just a few minutes.
 
-### Step 1: Set up your local environment
+## Prerequisites
+
+Make sure you have Rust and Cargo installed. See the [Installation](/installation) page for setup instructions.
+
+## Running HozonDB
+
+<Steps>
+  <Step title="Clone and build">
+    Navigate to the HozonDB source directory and run:
+    
+    ```bash
+    cargo run
+    ```
+    
+    You'll see the HozonDB REPL start:
+    
+    ```
+    HozonDB v0.1.0
+    Enter '.help' for usage hints.
+    
+    hozondb>
+    ```
+  </Step>
+  
+  <Step title="Open a database file">
+    Before executing SQL commands, you need to open or create a database file:
+    
+    ```sql
+    hozondb> .open test.hdb
+    Opened database file: test.hdb
+    ```
+    
+    <Note>
+    If the file doesn't exist, HozonDB will create it automatically. Database files use the `.hdb` extension.
+    </Note>
+  </Step>
+  
+  <Step title="Create your first table">
+    Let's create a simple users table:
+    
+    ```sql
+    hozondb> CREATE TABLE users (id INTEGER, name TEXT);
+    Table 'users' created.
+    ```
+    
+    HozonDB supports these data types:
+    - `INTEGER` - 32-bit signed integers
+    - `TEXT` - Variable-length strings
+    - `BOOLEAN` - True/false values
+    - `NULL` - Null values (can be used in any column)
+  </Step>
+  
+  <Step title="Insert data">
+    Add some rows to your table:
+    
+    ```sql
+    hozondb> INSERT INTO users VALUES (1, 'Alice');
+    1 row inserted.
+    
+    hozondb> INSERT INTO users VALUES (2, 'Bob');
+    1 row inserted.
+    
+    hozondb> INSERT INTO users VALUES (3, 'Charlie');
+    1 row inserted.
+    ```
+  </Step>
+  
+  <Step title="Query your data">
+    Retrieve all rows:
+    
+    ```sql
+    hozondb> SELECT * FROM users;
+    | id | name |
+    | 1 | "Alice" |
+    | 2 | "Bob" |
+    | 3 | "Charlie" |
+    ```
+    
+    Or select specific columns:
+    
+    ```sql
+    hozondb> SELECT name FROM users;
+    | name |
+    | "Alice" |
+    | "Bob" |
+    | "Charlie" |
+    ```
+  </Step>
+</Steps>
+
+## Using WHERE Clauses
+
+HozonDB supports filtering with WHERE clauses:
+
+```sql
+-- Equality comparison
+hozondb> SELECT * FROM users WHERE id = 2;
+| id | name |
+| 2 | "Bob" |
+
+-- Greater than
+hozondb> SELECT * FROM users WHERE id > 1;
+| id | name |
+| 2 | "Bob" |
+| 3 | "Charlie" |
+
+-- Text comparison
+hozondb> SELECT * FROM users WHERE name = 'Alice';
+| id | name |
+| 1 | "Alice" |
+```
+
+### Supported Operators
+
+- **Comparison**: `=`, `>`, `<`, `>=`, `<=`
+- **Logical**: `AND`, `OR`
+
+Example with logical operators:
+
+```sql
+hozondb> SELECT * FROM users WHERE id > 1 AND id < 3;
+| id | name |
+| 2 | "Bob" |
+```
+
+## Updating and Deleting Data
+
+### UPDATE Statement
+
+Modify existing rows:
+
+```sql
+hozondb> UPDATE users SET name = 'Alice Smith' WHERE id = 1;
+1 row updated.
+```
+
+Update multiple rows:
+
+```sql
+hozondb> UPDATE users SET name = 'Anonymous' WHERE id > 1;
+2 rows updated.
+```
+
+### DELETE Statement
+
+Remove specific rows:
+
+```sql
+hozondb> DELETE FROM users WHERE id = 3;
+1 row deleted.
+```
+
+Delete all rows matching a condition:
+
+```sql
+hozondb> DELETE FROM users WHERE id > 1;
+2 rows deleted.
+```
+
+## Meta Commands
+
+HozonDB provides several meta-commands (commands starting with `.`):
 
 <AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
+  <Accordion title=".help - Show available commands">
+    ```
+    hozondb> .help
+    Available commands:
+      .help              - Show this help message
+      .open <file>       - Open or create a database file
+      .benchmark [rows]  - Run performance benchmarks (default: 10000 rows)
+      .exit              - Exit the program
+    ```
   </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
+  
+  <Accordion title=".open <file> - Open a database">
+    Opens an existing database file or creates a new one:
+    ```
+    hozondb> .open mydata.hdb
+    Opened database file: mydata.hdb
+    ```
     
-    <Tip>Your preview updates automatically as you edit files.</Tip>
+    <Warning>
+    You must open a database before executing SQL commands. Only one database can be open at a time.
+    </Warning>
+  </Accordion>
+  
+  <Accordion title=".benchmark [rows] - Run benchmarks">
+    Runs performance tests on your database:
+    ```
+    hozondb> .benchmark 1000
+    
+    ╔══════════════════════════════════════════════════════════════╗
+    ║              HozonDB Benchmark Starting...                   ║
+    ╚══════════════════════════════════════════════════════════════╝
+    
+    Configuration:
+      Rows: 1000
+    
+    Setting up test data...
+    Running benchmarks...
+    Cleaning up...
+    ```
+    
+    The benchmark suite tests:
+    - **Read operations**: Full table scan, first/middle/last row selects
+    - **Write operations**: Single and bulk inserts, updates, and deletes
+    
+    Results include:
+    - Duration (ms)
+    - Pages read/written
+    - Rows scanned/modified
+  </Accordion>
+  
+  <Accordion title=".exit - Exit the REPL">
+    Exits HozonDB and closes the database:
+    ```
+    hozondb> .exit
+    Exiting HozonDB. Goodbye!
+    ```
+    
+    You can also use `.quit` as an alias.
   </Accordion>
 </AccordionGroup>
 
-### Step 2: Deploy your changes
+## Complete Example Session
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+Here's a complete example showing all major features:
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+```sql
+# Start HozonDB
+$ cargo run
+HozonDB v0.1.0
+Enter '.help' for usage hints.
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+hozondb> .open example.hdb
+Opened database file: example.hdb
 
-### Step 3: Go live
+# Create table with multiple data types
+hozondb> CREATE TABLE products (id INTEGER, name TEXT, price INTEGER, in_stock BOOLEAN);
+Table 'products' created.
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+# Insert some products
+hozondb> INSERT INTO products VALUES (1, 'Laptop', 999, true);
+1 row inserted.
 
-## Next steps
+hozondb> INSERT INTO products VALUES (2, 'Mouse', 25, true);
+1 row inserted.
 
-Now that you have your docs running, explore these key features:
+hozondb> INSERT INTO products VALUES (3, 'Keyboard', 75, false);
+1 row inserted.
+
+# Query all products
+hozondb> SELECT * FROM products;
+| id | name | price | in_stock |
+| 1 | "Laptop" | 999 | true |
+| 2 | "Mouse" | 25 | true |
+| 3 | "Keyboard" | 75 | false |
+
+# Find products in stock
+hozondb> SELECT name, price FROM products WHERE in_stock = true;
+| name | price |
+| "Laptop" | 999 |
+| "Mouse" | 25 |
+
+# Update prices
+hozondb> UPDATE products SET price = 20 WHERE name = 'Mouse';
+1 row updated.
+
+# Delete out-of-stock items
+hozondb> DELETE FROM products WHERE in_stock = false;
+1 row deleted.
+
+# Drop the table when done
+hozondb> DROP TABLE products;
+products table successfully dropped
+
+hozondb> .exit
+Exiting HozonDB. Goodbye!
+```
+
+## What's Next?
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Installation Guide" icon="download" href="/installation">
+    Learn about installation options and building from source
+  </Card>
+  
+  <Card title="SQL Reference" icon="book">
+    Detailed documentation on supported SQL syntax (coming soon)
+  </Card>
 </CardGroup>
 
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+## Tips and Best Practices
+
+<Tip>
+**Data Persistence**: All data is automatically saved to disk after each operation. You can safely exit and reopen your database files.
+</Tip>
+
+<Tip>
+**Keywords are case-insensitive**: You can use `SELECT`, `select`, or `Select` - they all work the same way.
+</Tip>
+
+<Warning>
+**File Locking**: HozonDB uses file-based locking to prevent concurrent access. Only one process can open a database file at a time.
+</Warning>

@@ -1,0 +1,250 @@
+---
+title: Architecture Overview
+description: Understanding HozonDB's layered architecture and core components
+---
+
+HozonDB is built with a modular, layered architecture that separates concerns and makes the codebase maintainable. The database is organized into four primary layers:
+
+## Architecture Layers
+
+<Tabs>
+  <Tab title="Storage Layer">
+    The storage layer (`src/storage/`) manages all disk I/O operations and provides page-based storage abstraction.
+
+    ### Page Manager
+    The `PageManager` is responsible for:
+    - **File Management**: Creates and opens database files with `.hdb` extension
+    - **Page Allocation**: Manages fixed-size pages (4096 bytes each)
+    - **Concurrency Control**: Uses file-based locking (`.hdb.lock`) to prevent concurrent access
+    - **Free Space Management**: Maintains a linked list of free pages for efficient reuse
+
+    ```rust
+    // From src/storage/page.rs
+    pub const PAGE_SIZE: usize = 4096;
+    pub const MAGIC_NUMBER: u32 = 0x484F5A4E; // "HOZN"
+    ```
+
+    ### Page Structure
+    Each page (except page 0) contains:
+    - **Metadata (9 bytes)**: 
+      - `is_full` (1 byte): Whether the page can fit more rows
+      - `last_offset` (2 bytes): Current write position
+      - `num_rows` (2 bytes): Number of rows stored
+      - `next_page` (4 bytes): Pointer to next page in chain
+    - **Data Area (4087 bytes)**: Stores serialized rows
+
+    ### Database File Layout
+    - **Page 0**: Database header (magic number, page count, free list head)
+    - **Page 1**: Table catalog metadata
+    - **Page 2+**: Table data pages
+
+    <Note>
+    HozonDB uses page 0 as a special header page containing the magic number `0x484F5A4E` ("HOZN" in ASCII), total page count, and the first free page pointer.
+    </Note>
+  </Tab>
+
+  <Tab title="Catalog Layer">
+    The catalog layer (`src/catalog/`) manages schemas, tables, and row data structures.
+
+    ### Table Catalog
+    The `TableCatalog` maintains metadata for all tables:
+    - Table schemas (column names and types)
+    - First page ID for each table
+    - Serialization/deserialization of catalog to page 1
+
+    ```rust
+    // Creating the catalog from src/repl.rs:138-140
+    let pm = PageManager::new(filename)?;
+    let catalog = TableCatalog::new(pm)?;
+    let executor = Executor::new(catalog);
+    ```
+
+    ### Schema & Columns
+    Schemas define table structure with typed columns:
+    - `INTEGER`: 32-bit signed integers
+    - `TEXT`: Variable-length UTF-8 strings
+    - `BOOLEAN`: True/false values
+    - `NULL`: Null values (can appear in any column)
+
+    ### Row Storage
+    Rows are serialized as byte sequences with type tags:
+    ```
+    [type_tag][data][type_tag][data]...[0x00]
+    ```
+    - Type tags: 1=Integer, 2=Text, 3=Boolean, 4=Null
+    - Terminated with 0x00 byte
+  </Tab>
+
+  <Tab title="SQL Layer">
+    The SQL layer (`src/sql/`) handles query parsing and execution.
+
+    ### Tokenizer
+    Converts SQL text into tokens:
+    ```sql
+    SELECT * FROM users WHERE id = 1;
+    ```
+    Becomes: `[Select, Asterisk, From, Identifier("users"), Where, Identifier("id"), Equals, NumberLiteral(1), Semicolon]`
+
+    ### Parser
+    Builds an Abstract Syntax Tree (AST) from tokens. Supports:
+    - `CREATE TABLE` - Define new tables
+    - `INSERT INTO` - Add rows
+    - `SELECT` - Query with projection and filtering
+    - `UPDATE` - Modify existing rows
+    - `DELETE` - Remove rows
+    - `DROP TABLE` - Delete tables
+
+    ### WHERE Clause Parsing
+    The parser uses precedence climbing for expressions:
+    1. **Operands** (highest precedence): Columns, literals
+    2. **Comparison operators**: `=`, `!=`, `<`, `>`, `<=`, `>=`
+    3. **AND operator**: Logical conjunction
+    4. **OR operator** (lowest precedence): Logical disjunction
+
+    ```rust
+    // From src/sql/parser.rs:399-413
+    fn parse_or_expr(&mut self) -> io::Result<Expr> {
+        let mut left = self.parse_and_expr()?;
+        while matches!(self.peek(), Some(Token::Or)) {
+            self.advance();
+            let right = self.parse_and_expr()?;
+            left = Expr::BinaryOp {
+                left: Box::new(left),
+                op: BinaryOperator::Or,
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+    ```
+
+    ### Executor
+    Executes parsed statements by:
+    1. Validating table/column existence
+    2. Reading pages from storage
+    3. Filtering rows based on WHERE clauses
+    4. Writing modified data back to pages
+    5. Updating page metadata
+  </Tab>
+
+  <Tab title="REPL Layer">
+    The REPL (`src/repl.rs`) provides an interactive command-line interface.
+
+    ### Command Processing
+    ```rust
+    // From src/repl.rs:52-58
+    pub fn execute_command(&mut self, command: &str) -> io::Result<()> {
+        if command.starts_with(".") {
+            self.execute_meta_command(command)
+        } else {
+            self.execute_sql_command(command)
+        }
+    }
+    ```
+
+    ### Meta-Commands
+    Commands starting with `.` for database operations:
+    - `.open <file>` - Open/create database
+    - `.help` - Show available commands
+    - `.benchmark [rows]` - Run performance tests
+    - `.exit` - Quit the REPL
+
+    ### SQL Execution Flow
+    1. Read user input
+    2. Tokenize SQL statement
+    3. Parse into AST
+    4. Execute via `Executor`
+    5. Display results in table format
+  </Tab>
+</Tabs>
+
+## Data Flow Example
+
+Here's how a `SELECT * FROM users WHERE id = 1;` query flows through the system:
+
+<Accordion title="Step-by-Step Query Execution">
+  1. **REPL Input**: User enters SQL command
+  2. **Tokenization**: SQL string → Token stream (`src/sql/tokenizer.rs:90`)
+  3. **Parsing**: Tokens → SELECT Statement AST (`src/sql/parser.rs:263-333`)
+  4. **Execution Start**: Executor receives statement (`src/sql/executor.rs:211-245`)
+  5. **Table Lookup**: Find table metadata in catalog (`src/sql/executor.rs:247-259`)
+  6. **Page Reading**: Read all pages in table's page chain (`src/sql/executor.rs:51-92`)
+  7. **Row Deserialization**: Parse rows from page bytes (`src/catalog/row.rs:59-149`)
+  8. **WHERE Filtering**: Evaluate expression on each row (`src/sql/evaluator.rs`)
+  9. **Result Projection**: Select requested columns (`src/sql/executor.rs:423-468`)
+  10. **REPL Output**: Display rows in table format (`src/repl.rs:98-114`)
+</Accordion>
+
+## Multi-Page Support
+
+<Note>
+Added in Phase 5, HozonDB now supports tables spanning multiple pages.
+</Note>
+
+When a table grows beyond one page, HozonDB:
+1. Links pages together using the `next_page` pointer in metadata
+2. Reads all pages in the chain during SELECT queries
+3. Allocates new pages as needed during INSERT operations
+4. Frees unused pages during DELETE/UPDATE operations
+
+```rust
+// From src/sql/executor.rs:51-92
+fn read_all_table_rows(
+    &self,
+    first_page: u32,
+    metrics: &mut Option<QueryMetrics>,
+) -> io::Result<(Vec<Row>, Vec<PageId>)> {
+    let mut rows = Vec::new();
+    let mut cur_page = first_page;
+    
+    loop {
+        let page_data = self.catalog.read_page(cur_page)?;
+        let page_meta = PageManager::read_metadata_from_buffer(&page_data);
+        
+        // Parse rows from page
+        let mut new_rows = Self::read_rows_from_page(&page_data, page_meta.num_rows)?;
+        rows.append(&mut new_rows);
+        
+        // Follow chain to next page
+        if let Some(next_page) = page_meta.next_page {
+            cur_page = next_page;
+        } else {
+            break;
+        }
+    }
+    
+    Ok((rows, old_chain))
+}
+```
+
+## Concurrency & Safety
+
+<Warning>
+HozonDB currently supports single-writer access only. Attempting to open a database that's already in use will result in an error.
+</Warning>
+
+The database uses file-based locking:
+- On `.open`, creates a `.hdb.lock` file
+- If lock file exists, open fails with `WouldBlock` error
+- Lock is automatically released when `PageManager` is dropped
+
+```rust
+// From src/storage/page.rs:152-177
+fn acquire_lock(lock_path: &Path) -> io::Result<()> {
+    match OpenOptions::new()
+        .write(true)
+        .create_new(true)  // Fails if file exists!
+        .open(lock_path)
+    {
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+            Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                format!("Database is already in use. Lock file exists: {}",
+                    lock_path.display()),
+            ))
+        }
+        Err(e) => Err(e),
+    }
+}
+```

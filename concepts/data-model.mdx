@@ -1,0 +1,401 @@
+---
+title: Data Model
+description: Understanding schemas, tables, rows, columns, and data types in HozonDB
+---
+
+HozonDB uses a relational data model with strongly-typed columns. This page explains how data is organized and stored.
+
+## Tables & Schemas
+
+A **table** is a collection of rows with a defined schema. Each table has:
+- A unique name
+- A schema defining columns
+- One or more pages storing row data
+
+### Creating Tables
+
+Tables are created with the `CREATE TABLE` statement:
+
+```sql
+CREATE TABLE users (
+    id INTEGER,
+    name TEXT,
+    active BOOLEAN
+);
+```
+
+### Schema Structure
+
+The schema defines the table's structure and is stored in the catalog (page 1):
+
+```rust
+// From src/catalog/schema.rs:35-46
+pub struct Schema {
+    table_name: String,
+    columns: Vec<Column>,
+}
+
+pub struct Column {
+    name: String,
+    data_type: DataType,
+}
+```
+
+### Schema Serialization
+
+Schemas are serialized to bytes for storage:
+
+```
+[table_name_len: u32][table_name: bytes][num_columns: u32]
+[col1_name_len: u32][col1_name: bytes][col1_type: u8]
+[col2_name_len: u32][col2_name: bytes][col2_type: u8]
+...
+```
+
+<Accordion title="Schema Serialization Example">
+  For `CREATE TABLE users (id INTEGER, name TEXT);`:
+  
+  ```
+  [5, 0, 0, 0]              // table name length = 5
+  [117, 115, 101, 114, 115] // "users" in UTF-8
+  [2, 0, 0, 0]              // 2 columns
+  [2, 0, 0, 0]              // column name length = 2
+  [105, 100]                // "id" in UTF-8
+  [0]                       // DataType::Integer = 0
+  [4, 0, 0, 0]              // column name length = 4
+  [110, 97, 109, 101]       // "name" in UTF-8
+  [1]                       // DataType::Text = 1
+  ```
+</Accordion>
+
+## Data Types
+
+HozonDB supports four data types:
+
+<Tabs>
+  <Tab title="INTEGER">
+    32-bit signed integers.
+
+    **Range**: -2,147,483,648 to 2,147,483,647
+
+    **Storage**: 4 bytes (little-endian)
+
+    **Examples**:
+    ```sql
+    INSERT INTO users VALUES (1, 'Alice');
+    INSERT INTO users VALUES (-42, 'Bob');
+    INSERT INTO users VALUES (2147483647, 'Max');
+    ```
+
+    **Serialization**:
+    ```rust
+    // From src/catalog/row.rs:34-38
+    Value::Integer(val) => {
+        bytes.push(1);  // Type tag
+        bytes.extend_from_slice(&val.to_le_bytes());
+    }
+    ```
+  </Tab>
+
+  <Tab title="TEXT">
+    Variable-length UTF-8 strings.
+
+    **Storage**: Length prefix (4 bytes) + UTF-8 bytes
+
+    **Examples**:
+    ```sql
+    INSERT INTO users VALUES (1, 'Alice');
+    INSERT INTO users VALUES (2, 'Hello, World!');
+    INSERT INTO users VALUES (3, '');  -- Empty string
+    ```
+
+    **Serialization**:
+    ```rust
+    // From src/catalog/row.rs:39-44
+    Value::Text(text) => {
+        bytes.push(2);  // Type tag
+        let text_bytes = text.as_bytes();
+        bytes.extend_from_slice(&(text_bytes.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(text_bytes);
+    }
+    ```
+
+    <Note>
+    Special characters and Unicode are fully supported. Strings are validated as UTF-8 during deserialization.
+    </Note>
+  </Tab>
+
+  <Tab title="BOOLEAN">
+    True or false values.
+
+    **Storage**: 1 byte (0 = false, 1 = true)
+
+    **Examples**:
+    ```sql
+    CREATE TABLE users (id INTEGER, active BOOLEAN);
+    INSERT INTO users VALUES (1, true);
+    INSERT INTO users VALUES (2, false);
+    SELECT * FROM users WHERE active = true;
+    ```
+
+    **Serialization**:
+    ```rust
+    // From src/catalog/row.rs:45-48
+    Value::Boolean(bool) => {
+        bytes.push(3);  // Type tag
+        bytes.push(if *bool { 1 } else { 0 });
+    }
+    ```
+  </Tab>
+
+  <Tab title="NULL">
+    Represents the absence of a value. NULL can be stored in any column type.
+
+    **Storage**: 0 bytes (just the type tag)
+
+    **Examples**:
+    ```sql
+    CREATE TABLE users (id INTEGER, name TEXT);
+    INSERT INTO users VALUES (1, NULL);
+    INSERT INTO users VALUES (NULL, 'Alice');
+    SELECT * FROM users WHERE name = NULL;
+    ```
+
+    **Serialization**:
+    ```rust
+    // From src/catalog/row.rs:49-51
+    Value::Null => {
+        bytes.push(4);  // Type tag only
+    }
+    ```
+
+    <Warning>
+    NULL values are accepted in all column types, even when the column is defined as INTEGER, TEXT, or BOOLEAN.
+    </Warning>
+  </Tab>
+</Tabs>
+
+## Rows
+
+A **row** is a collection of values matching the table's schema.
+
+### Row Structure
+
+```rust
+// From src/catalog/row.rs:12-19
+pub struct Row {
+    values: Vec<Value>,
+}
+
+pub enum Value {
+    Integer(i32),
+    Text(String),
+    Boolean(bool),
+    Null,
+}
+```
+
+### Row Serialization Format
+
+Rows are serialized as a sequence of tagged values:
+
+```
+[type_tag][value_data][type_tag][value_data]...[0x00]
+```
+
+- **Type tags**: 1=Integer, 2=Text, 3=Boolean, 4=Null
+- **Terminator**: 0x00 byte marks end of row
+
+<Accordion title="Row Serialization Example">
+  For row `(42, 'Alice', true, NULL)`:
+  
+  ```
+  [1]                    // Integer type tag
+  [42, 0, 0, 0]         // 42 as i32 little-endian
+  [2]                    // Text type tag
+  [5, 0, 0, 0]          // Length = 5
+  [65, 108, 105, 99, 101] // "Alice" in UTF-8
+  [3]                    // Boolean type tag
+  [1]                    // true
+  [4]                    // Null type tag
+  [0]                    // Row terminator
+  ```
+
+  Total size: 1 + 4 + 1 + 4 + 5 + 1 + 1 + 1 + 1 = 19 bytes
+</Accordion>
+
+### Inserting Rows
+
+```sql
+INSERT INTO users VALUES (1, 'Alice', true);
+```
+
+The executor validates:
+1. **Column count** matches schema
+2. **Type compatibility** for each value
+
+```rust
+// From src/sql/executor.rs:662-671
+pub fn validate_value_type(value: &Value, data_type: &DataType) -> bool {
+    match (value, data_type) {
+        (Value::Integer(_), DataType::Integer) => true,
+        (Value::Text(_), DataType::Text) => true,
+        (Value::Boolean(_), DataType::Boolean) => true,
+        (Value::Null, _) => true,  // NULL can go in any column
+        _ => false,
+    }
+}
+```
+
+## Columns
+
+Columns define the structure of each row in a table.
+
+### Column Definition
+
+```rust
+// From src/catalog/schema.rs:12-23
+pub struct Column {
+    name: String,
+    data_type: DataType,
+}
+
+pub enum DataType {
+    Integer,
+    Text,
+    Boolean,
+    Null,
+}
+```
+
+### Accessing Column Data
+
+```rust
+// From src/catalog/row.rs:25-28
+pub fn get_value(&self, index: usize) -> Option<&Value> {
+    self.values.get(index)
+}
+```
+
+Columns are accessed by index (0-based) matching their position in the schema.
+
+## Table Catalog
+
+The catalog maintains metadata for all tables:
+
+```rust
+// From src/catalog/table.rs:5-18
+pub struct TableMetadata {
+    schema: Schema,
+    first_page: u32,
+}
+
+pub struct TableCatalog {
+    tables: HashMap<String, TableMetadata>,
+    page_manager: PageManager,
+}
+```
+
+### Catalog Operations
+
+<Tabs>
+  <Tab title="Create Table">
+    ```rust
+    // From src/catalog/table.rs:97-110
+    pub fn create_table(&mut self, schema: Schema) -> io::Result<()> {
+        // Allocate first page for table data
+        let first_page = self.page_manager.allocate_page()?;
+        
+        let table_name = schema.table_name().to_string();
+        let table_metadata = TableMetadata { schema, first_page };
+        
+        self.tables.insert(table_name, table_metadata);
+        
+        // Save catalog to page 1
+        self.save()?;
+        
+        Ok(())
+    }
+    ```
+  </Tab>
+
+  <Tab title="Get Table">
+    ```rust
+    // From src/catalog/table.rs:135-137
+    pub fn get_table(&self, name: &str) -> Option<&TableMetadata> {
+        self.tables.get(name)
+    }
+    ```
+  </Tab>
+
+  <Tab title="List Tables">
+    ```rust
+    // From src/catalog/table.rs:139-141
+    pub fn list_tables(&self) -> Vec<String> {
+        self.tables.keys().cloned().collect()
+    }
+    ```
+  </Tab>
+
+  <Tab title="Drop Table">
+    ```rust
+    // From src/catalog/table.rs:143-156
+    pub fn drop_table(&mut self, name: &str) -> io::Result<()> {
+        match self.tables.remove(name) {
+            Some(_) => {
+                self.save()?;
+                return Ok(());
+            }
+            None => {
+                return Err(Error::new(
+                    ErrorKind::NotFound,
+                    format!("Table '{}' does not exist", name),
+                ));
+            }
+        }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Type Validation Examples
+
+<Accordion title="Valid Inserts">
+  ```sql
+  CREATE TABLE users (id INTEGER, name TEXT, active BOOLEAN);
+  
+  -- All values match types
+  INSERT INTO users VALUES (1, 'Alice', true);
+  
+  -- NULL is allowed in any column
+  INSERT INTO users VALUES (NULL, NULL, NULL);
+  INSERT INTO users VALUES (2, NULL, false);
+  ```
+</Accordion>
+
+<Accordion title="Invalid Inserts (Type Mismatch)">
+  ```sql
+  CREATE TABLE users (id INTEGER, name TEXT);
+  
+  -- Error: text where integer expected
+  INSERT INTO users VALUES ('Alice', 'Bob');
+  
+  -- Error: integer where text expected  
+  INSERT INTO users VALUES (1, 2);
+  
+  -- Error: boolean where integer expected
+  INSERT INTO users VALUES (true, 'Alice');
+  ```
+</Accordion>
+
+<Accordion title="Invalid Inserts (Column Count)">
+  ```sql
+  CREATE TABLE users (id INTEGER, name TEXT);
+  
+  -- Error: too few values
+  INSERT INTO users VALUES (1);
+  
+  -- Error: too many values
+  INSERT INTO users VALUES (1, 'Alice', true);
+  ```
+</Accordion>

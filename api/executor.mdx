@@ -1,0 +1,320 @@
+---
+title: 'Executor'
+description: 'SQL statement execution engine for HozonDB'
+---
+
+The `Executor` struct executes parsed SQL statements against the database, managing data manipulation and retrieval operations.
+
+## Struct Definition
+
+```rust
+pub struct Executor {
+    catalog: TableCatalog,
+}
+```
+
+<ParamField path="catalog" type="TableCatalog">
+  The table catalog managing all database tables and their metadata
+</ParamField>
+
+## ExecutionResult Enum
+
+Represents the result of executing a SQL statement.
+
+```rust
+pub enum ExecutionResult {
+    Success { message: String },
+    Rows { columns: Vec<String>, rows: Vec<Row> },
+}
+```
+
+<ParamField path="Success.message" type="String">
+  Success message for DDL/DML operations (CREATE, INSERT, UPDATE, DELETE, DROP)
+</ParamField>
+
+<ParamField path="Rows.columns" type="Vec<String>">
+  Column names for SELECT query results
+</ParamField>
+
+<ParamField path="Rows.rows" type="Vec<Row>">
+  Data rows returned by SELECT queries
+</ParamField>
+
+## Methods
+
+### new
+
+Creates a new executor with the given table catalog.
+
+```rust
+pub fn new(catalog: TableCatalog) -> Self
+```
+
+<ParamField path="catalog" type="TableCatalog" required>
+  The table catalog to use for this executor
+</ParamField>
+
+<ResponseField name="return" type="Executor">
+  A new executor instance
+</ResponseField>
+
+**Example:**
+```rust
+use hozondb::sql::executor::Executor;
+use hozondb::catalog::table::TableCatalog;
+use hozondb::storage::page::PageManager;
+
+let pm = PageManager::new("mydb.hdb")?;
+let catalog = TableCatalog::new(pm)?;
+let mut executor = Executor::new(catalog);
+```
+
+### execute
+
+Executes a parsed SQL statement and returns the result.
+
+```rust
+pub fn execute(
+    &mut self,
+    statement: Statement,
+    metrics: &mut Option<QueryMetrics>,
+) -> io::Result<ExecutionResult>
+```
+
+<ParamField path="statement" type="Statement" required>
+  The parsed SQL statement to execute
+</ParamField>
+
+<ParamField path="metrics" type="&mut Option<QueryMetrics>">
+  Optional query metrics collector for benchmarking. Tracks pages read/written, rows scanned/modified, and execution time.
+</ParamField>
+
+<ResponseField name="return" type="io::Result<ExecutionResult>">
+  - `Ok(ExecutionResult::Success)` for DDL/DML operations
+  - `Ok(ExecutionResult::Rows)` for SELECT queries
+  - `Err` if execution fails
+</ResponseField>
+
+**Example:**
+```rust
+use hozondb::sql::parser::{Parser, Statement};
+use hozondb::sql::tokenizer;
+
+// Parse SQL
+let tokens = tokenizer::tokenize("CREATE TABLE users (id INTEGER, name TEXT);")?;
+let statement = Parser::new(tokens).parse()?;
+
+// Execute
+let result = executor.execute(statement, &mut None)?;
+
+match result {
+    ExecutionResult::Success { message } => println!("{}", message),
+    ExecutionResult::Rows { columns, rows } => {
+        // Display results
+    }
+}
+```
+
+## Supported Statements
+
+### CREATE TABLE
+
+Creates a new table with the specified schema.
+
+```rust
+Statement::CreateTable {
+    name: String,
+    columns: Vec<Column>,
+}
+```
+
+**Example:**
+```rust
+let sql = "CREATE TABLE users (id INTEGER, name TEXT, active BOOLEAN);";
+let tokens = tokenizer::tokenize(sql)?;
+let statement = Parser::new(tokens).parse()?;
+let result = executor.execute(statement, &mut None)?;
+// Returns: ExecutionResult::Success { message: "Table 'users' created." }
+```
+
+### INSERT
+
+Inserts a row into a table.
+
+```rust
+Statement::Insert {
+    table_name: String,
+    values: Vec<Value>,
+}
+```
+
+**Validation:**
+- Value count must match column count
+- Value types must match column types
+- `Value::Null` can be inserted into any column type
+
+**Example:**
+```rust
+let sql = "INSERT INTO users VALUES (1, 'Alice', true);";
+let result = executor.execute(Parser::new(tokenizer::tokenize(sql)?).parse()?, &mut None)?;
+// Returns: ExecutionResult::Success { message: "1 row inserted." }
+```
+
+### SELECT
+
+Queries data from a table.
+
+```rust
+Statement::Select {
+    table_name: String,
+    columns: SelectColumns,
+    where_clause: Option<Expr>,
+}
+```
+
+<ParamField path="columns" type="SelectColumns">
+  Either `SelectColumns::All` for `SELECT *` or `SelectColumns::Specific(Vec<String>)` for named columns
+</ParamField>
+
+<ParamField path="where_clause" type="Option<Expr>">
+  Optional filter expression supporting comparison operators and logical operators (AND, OR)
+</ParamField>
+
+**Example:**
+```rust
+// SELECT all columns
+let sql = "SELECT * FROM users;";
+let result = executor.execute(Parser::new(tokenizer::tokenize(sql)?).parse()?, &mut None)?;
+
+// SELECT specific columns with WHERE clause
+let sql = "SELECT name, id FROM users WHERE active = true;";
+let result = executor.execute(Parser::new(tokenizer::tokenize(sql)?).parse()?, &mut None)?;
+
+match result {
+    ExecutionResult::Rows { columns, rows } => {
+        println!("Columns: {:?}", columns);
+        println!("Row count: {}", rows.len());
+    }
+    _ => {}
+}
+```
+
+### UPDATE
+
+Updates rows in a table.
+
+```rust
+Statement::Update {
+    table_name: String,
+    assignments: Vec<(String, Value)>,
+    where_clause: Option<Expr>,
+}
+```
+
+<ParamField path="assignments" type="Vec<(String, Value)>">
+  Column-value pairs to update. Column must exist and value type must match.
+</ParamField>
+
+**Example:**
+```rust
+let sql = "UPDATE users SET name = 'Bob', active = false WHERE id = 1;";
+let result = executor.execute(Parser::new(tokenizer::tokenize(sql)?).parse()?, &mut None)?;
+// Returns: ExecutionResult::Success { message: "1 row updated." }
+```
+
+### DELETE
+
+Deletes rows from a table.
+
+```rust
+Statement::Delete {
+    table_name: String,
+    where_clause: Option<Expr>,
+}
+```
+
+**Example:**
+```rust
+// Delete specific rows
+let sql = "DELETE FROM users WHERE active = false;";
+let result = executor.execute(Parser::new(tokenizer::tokenize(sql)?).parse()?, &mut None)?;
+
+// Delete all rows
+let sql = "DELETE FROM users;";
+let result = executor.execute(Parser::new(tokenizer::tokenize(sql)?).parse()?, &mut None)?;
+```
+
+### DROP TABLE
+
+Deletes a table and all its data.
+
+```rust
+Statement::DropTable {
+    name: String,
+}
+```
+
+**Example:**
+```rust
+let sql = "DROP TABLE users;";
+let result = executor.execute(Parser::new(tokenizer::tokenize(sql)?).parse()?, &mut None)?;
+// Returns: ExecutionResult::Success { message: "users table successfully dropped" }
+```
+
+## Data Type Validation
+
+The executor validates data types for INSERT and UPDATE operations:
+
+```rust
+pub fn validate_value_type(value: &Value, data_type: &DataType) -> bool
+```
+
+| Value Type | Allowed Column Types |
+|------------|---------------------|
+| `Value::Integer(i64)` | `DataType::Integer` |
+| `Value::Text(String)` | `DataType::Text` |
+| `Value::Boolean(bool)` | `DataType::Boolean` |
+| `Value::Null` | Any type |
+
+## Performance Metrics
+
+When a `QueryMetrics` instance is provided, the executor tracks:
+
+<ParamField path="pages_read" type="usize">
+  Number of pages read from disk
+</ParamField>
+
+<ParamField path="pages_written" type="usize">
+  Number of pages written to disk
+</ParamField>
+
+<ParamField path="rows_scanned" type="usize">
+  Number of rows scanned during execution
+</ParamField>
+
+<ParamField path="rows_modified" type="usize">
+  Number of rows modified (INSERT/UPDATE/DELETE)
+</ParamField>
+
+<ParamField path="duration_ms" type="f64">
+  Total execution time in milliseconds
+</ParamField>
+
+**Example:**
+```rust
+use hozondb::benchmark::metrics::QueryMetrics;
+
+let mut metrics = Some(QueryMetrics::default());
+let result = executor.execute(statement, &mut metrics)?;
+
+if let Some(m) = metrics {
+    println!("Pages read: {}", m.pages_read);
+    println!("Execution time: {} ms", m.duration_ms);
+}
+```
+
+## Related Types
+
+- [Parser](/api/parser) - Parses SQL into Statement enums
+- [TableCatalog](/api/table-catalog) - Manages table metadata
+- [PageManager](/api/page-manager) - Handles page-level storage

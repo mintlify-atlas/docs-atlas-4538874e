@@ -1,0 +1,150 @@
+---
+title: 'Benchmarking'
+description: 'Measure HozonDB performance with the built-in .benchmark command'
+---
+
+HozonDB includes a built-in benchmarking tool to measure database performance across various operations. The `.benchmark` command creates a temporary table, runs a comprehensive suite of tests, and reports detailed metrics.
+
+## Running Benchmarks
+
+### Basic Usage
+
+Run benchmarks with the default 10,000 rows:
+
+```bash
+hozondb> .benchmark
+```
+
+### Custom Row Count
+
+Specify a custom number of rows for testing:
+
+```bash
+hozondb> .benchmark 50000
+```
+
+<Note>
+  You must have a database open before running benchmarks. Use `.open <file>` first.
+</Note>
+
+## Benchmark Operations
+
+The benchmark suite tests the following operations:
+
+### Read Operations
+
+- **SELECT (full table scan)** - Retrieves all rows from the table without a WHERE clause
+- **SELECT (first row)** - Queries the first row by ID (id = 1)
+- **SELECT (middle row)** - Queries the middle row by ID (id = num_rows / 2)
+- **SELECT (last row)** - Queries the last row by ID (id = num_rows)
+- **SELECT (non-existent row)** - Searches for a row that doesn't exist (id = num_rows + 1)
+
+### Write Operations
+
+- **INSERT (1 row)** - Inserts a single new row
+- **UPDATE (single row)** - Updates a single row by ID
+- **UPDATE (bulk rows - 10%)** - Updates 10% of rows in the table
+- **DELETE (single row)** - Deletes a single row by ID
+- **DELETE (bulk rows - 10%)** - Deletes 10% of rows from the table
+
+## Benchmark Output
+
+The benchmark command displays results in two formatted tables:
+
+### Read Operations Table
+
+```
+━━━ READ OPERATIONS ━━━
+┌───────────────────────────┬────────────┬────────────┬──────────────┬──────────────┐
+│ Query                     │ Duration   │ Pages      │ Rows         │ Rows         │
+│                           │ (ms)       │ Read       │ Scanned      │ Returned     │
+├───────────────────────────┼────────────┼────────────┼──────────────┼──────────────┤
+│ SELECT (full table scan)  │      45.23 │        125 │        10000 │        10000 │
+│ SELECT (first row)        │       0.12 │          1 │            1 │            1 │
+│ SELECT (middle row)       │      22.15 │         63 │         5000 │            1 │
+│ SELECT (last row)         │      44.89 │        125 │        10000 │            1 │
+│ SELECT (non-existent row) │      45.01 │        125 │        10000 │            0 │
+└───────────────────────────┴────────────┴────────────┴──────────────┴──────────────┘
+```
+
+### Write Operations Table
+
+```
+━━━ WRITE OPERATIONS ━━━
+┌───────────────────────────┬────────────┬────────────┬────────────┬──────────────┐
+│ Operation                 │ Duration   │ Pages      │ Pages      │ Rows         │
+│                           │ (ms)       │ Read       │ Written    │ Modified     │
+├───────────────────────────┼────────────┼────────────┼────────────┼──────────────┤
+│ INSERT (1 row)            │       0.18 │          2 │          1 │            1 │
+│ UPDATE (single row)       │       0.15 │          1 │          1 │            1 │
+│ UPDATE (bulk rows - 10%)  │      52.30 │        125 │         13 │         1000 │
+│ DELETE (bulk rows - 10%)  │      48.77 │        125 │         13 │         1000 │
+│ DELETE (single row)       │       0.14 │          1 │          1 │            1 │
+└───────────────────────────┴────────────┴────────────┴────────────┴──────────────┘
+```
+
+## Metrics Explained
+
+### Duration (ms)
+The total time taken to execute the operation, measured in milliseconds.
+
+### Pages Read
+The number of database pages read from disk during the operation. Lower is better for operations that should be selective.
+
+### Pages Written
+The number of database pages written to disk during write operations. Indicates the write amplification of the operation.
+
+### Rows Scanned
+The total number of rows examined to complete the query. For operations with WHERE clauses, this shows the efficiency of the query execution (fewer scans = better performance).
+
+### Rows Returned/Modified
+- **Returned**: Number of rows returned by SELECT queries
+- **Modified**: Number of rows changed by INSERT, UPDATE, or DELETE operations
+
+## Test Data Schema
+
+Benchmarks use a temporary table with the following schema:
+
+```sql
+CREATE TABLE benchmark_temp_<timestamp> (
+  id INTEGER,
+  name TEXT,
+  age INTEGER
+);
+```
+
+The table is automatically:
+- Created at the start of benchmarking
+- Populated with test data (id: 1 to num_rows, name: "Name1" to "NameN", age: 20-49)
+- Dropped after benchmarks complete
+
+## Implementation Details
+
+The benchmark tool is implemented in:
+- `src/benchmark/runner.rs` - Core benchmark logic and test operations
+- `src/benchmark/metrics.rs` - QueryMetrics structure for tracking performance
+- `src/repl.rs` - Command interface and results formatting (print_read_table, print_write_table)
+
+## Example Session
+
+```bash
+hozondb> .open test.hdb
+Opened database file: test.hdb
+
+hozondb> .benchmark 10000
+
+╔══════════════════════════════════════════════════════════════╗
+║              HozonDB Benchmark Starting...                   ║
+╚══════════════════════════════════════════════════════════════╝
+
+Configuration:
+  Rows: 10000
+
+Setting up test data...
+Running benchmarks...
+Cleaning up...
+
+BENCHMARK RESULTS
+
+[Results tables displayed here]
+```

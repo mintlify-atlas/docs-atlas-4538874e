@@ -1,0 +1,433 @@
+---
+title: WHERE Clauses
+description: Filter rows using WHERE clauses with comparison and logical operators
+---
+
+WHERE clauses filter rows in SELECT, UPDATE, and DELETE statements using comparison and logical operators.
+
+## Syntax
+
+```sql
+WHERE condition
+WHERE left_operand operator right_operand
+WHERE condition1 AND condition2
+WHERE condition1 OR condition2
+```
+
+## Comparison Operators
+
+HozonDB supports six comparison operators:
+
+### Equals
+
+```sql
+SELECT * FROM users WHERE id = 1;
+SELECT * FROM users WHERE name = 'Alice';
+SELECT * FROM users WHERE active = true;
+SELECT * FROM users WHERE value = NULL;
+```
+
+### Not Equals
+
+```sql
+SELECT * FROM users WHERE id != 1;
+SELECT * FROM users WHERE status != 'inactive';
+```
+
+### Less Than
+
+```sql
+SELECT * FROM users WHERE age < 18;
+SELECT * FROM products WHERE price < 100;
+```
+
+From the test suite (src/sql/parser.rs:1488-1537):
+
+```sql
+SELECT * FROM users WHERE id < 30;
+```
+
+### Greater Than
+
+```sql
+SELECT * FROM users WHERE age > 65;
+SELECT * FROM orders WHERE total > 1000;
+```
+
+From the test suite (src/sql/parser.rs:1432-1485):
+
+```sql
+SELECT * FROM users WHERE age > 23;
+```
+
+### Less Than or Equal
+
+```sql
+SELECT * FROM users WHERE age <= 18;
+SELECT * FROM products WHERE stock <= 10;
+```
+
+### Greater Than or Equal
+
+```sql
+SELECT * FROM users WHERE age >= 18;
+SELECT * FROM orders WHERE amount >= 100;
+```
+
+From the test suite (src/sql/parser.rs:655-695), all six operators are validated:
+
+```rust
+// BinaryOperator enum from source
+pub enum BinaryOperator {
+    // Comparison
+    Equals,
+    NotEquals,
+    LessThan,
+    GreaterThan,
+    LessOrEqual,
+    GreaterOrEqual,
+    // logical
+    And,
+    Or,
+}
+```
+
+## Operand Types
+
+### Column References
+
+Reference a column by name:
+
+```sql
+WHERE id = 1
+WHERE user_name = 'Alice'
+```
+
+### Literal Values
+
+#### Integer Literals
+
+```sql
+WHERE age = 25
+WHERE balance < -100
+WHERE count >= 0
+```
+
+Negative numbers are supported (src/sql/parser.rs:958-976):
+
+```sql
+SELECT * FROM users WHERE balance < -100;
+```
+
+#### String Literals
+
+Use single quotes for text:
+
+```sql
+WHERE name = 'Alice'
+WHERE status = 'active'
+```
+
+From the test suite (src/sql/parser.rs:699-717):
+
+```sql
+SELECT * FROM users WHERE name = 'Alice';
+```
+
+#### Boolean Literals
+
+```sql
+WHERE active = true
+WHERE deleted = false
+```
+
+From the test suite (src/sql/parser.rs:720-735):
+
+```sql
+SELECT * FROM users WHERE active = true;
+```
+
+#### NULL Literal
+
+```sql
+WHERE email = NULL
+WHERE optional_field = NULL
+```
+
+From the test suite (src/sql/parser.rs:940-955):
+
+```sql
+SELECT * FROM users WHERE data = NULL;
+```
+
+## Logical Operators
+
+### AND Operator
+
+Combines conditions that must all be true:
+
+```sql
+SELECT * FROM users WHERE id = 1 AND name = 'Alice';
+```
+
+From the test suite (src/sql/parser.rs:738-763):
+
+```sql
+SELECT * FROM users WHERE id = 1 AND name = 'Alice';
+```
+
+Multiple AND conditions:
+
+```sql
+SELECT * FROM users WHERE id > 1 AND age < 30 AND active = true;
+```
+
+From the test suite (src/sql/parser.rs:786-805):
+
+```sql
+SELECT * FROM users WHERE id > 1 AND age < 30 AND active = true;
+```
+
+### OR Operator
+
+Combines conditions where at least one must be true:
+
+```sql
+SELECT * FROM users WHERE id = 1 OR id = 2;
+```
+
+From the test suite (src/sql/parser.rs:766-783):
+
+```sql
+SELECT * FROM users WHERE id = 1 OR id = 2;
+```
+
+Multiple OR conditions:
+
+```sql
+SELECT * FROM users WHERE id = 1 OR id = 2 OR id = 3;
+```
+
+From the test suite (src/sql/parser.rs:808-823):
+
+```sql
+SELECT * FROM users WHERE id = 1 OR id = 2 OR id = 3;
+```
+
+## Operator Precedence
+
+<Note>
+AND has higher precedence than OR. This affects how complex conditions are evaluated.
+</Note>
+
+From the parser implementation (src/sql/parser.rs:396-413):
+
+```rust
+/// entry point for parsing where clause,
+/// as it is of the lowest precedence so it get's evaluated last
+/// it calls a higher precedence function `parse_and_expr`
+fn parse_or_expr(&mut self) -> io::Result<Expr> {
+    let mut left = self.parse_and_expr()?;
+    while matches!(self.peek(), Some(Token::Or)) {
+        self.advance();
+        let right = self.parse_and_expr()?;
+        left = Expr::BinaryOp {
+            left: Box::new(left),
+            op: BinaryOperator::Or,
+            right: Box::new(right),
+        };
+    }
+    Ok(left)
+}
+```
+
+### Precedence Examples
+
+This query:
+
+```sql
+SELECT * FROM users WHERE id = 1 OR age > 18 AND active = true;
+```
+
+Is evaluated as:
+
+```
+id = 1 OR (age > 18 AND active = true)
+```
+
+From the test suite (src/sql/parser.rs:826-859):
+
+```sql
+-- Parsed as: id = 1 OR (age > 18 AND active = true)
+SELECT * FROM users WHERE id = 1 OR age > 18 AND active = true;
+```
+
+Complex precedence:
+
+```sql
+SELECT * FROM users 
+WHERE id = 1 AND age > 18 OR name = 'Alice' AND active = true;
+```
+
+Is evaluated as:
+
+```
+(id = 1 AND age > 18) OR (name = 'Alice' AND active = true)
+```
+
+From the test suite (src/sql/parser.rs:862-892):
+
+```sql
+-- Parsed as: (id = 1 AND age > 18) OR (name = 'Alice' AND active = true)
+SELECT * FROM users 
+WHERE id = 1 AND age > 18 OR name = 'Alice' AND active = true;
+```
+
+## Usage in Different Statements
+
+### SELECT with WHERE
+
+```sql
+SELECT * FROM users WHERE age >= 18;
+SELECT id, name FROM users WHERE active = true AND role = 'admin';
+```
+
+### UPDATE with WHERE
+
+```sql
+UPDATE users SET active = false WHERE last_login < 20240101;
+UPDATE products SET price = 99 WHERE category = 'sale' OR stock > 100;
+```
+
+### DELETE with WHERE
+
+```sql
+DELETE FROM logs WHERE timestamp < 1000000;
+DELETE FROM users WHERE active = false AND created_date < 20230101;
+```
+
+## Complex Query Examples
+
+### Multiple AND Conditions
+
+```sql
+SELECT * FROM employees 
+WHERE department = 'Engineering' 
+  AND years_experience >= 5 
+  AND salary < 150000;
+```
+
+### Multiple OR Conditions
+
+```sql
+SELECT * FROM products 
+WHERE category = 'Electronics' 
+   OR category = 'Computers' 
+   OR category = 'Accessories';
+```
+
+### Mixed AND/OR
+
+```sql
+SELECT * FROM orders 
+WHERE status = 'pending' AND amount > 100 
+   OR status = 'processing' AND priority = 'high';
+```
+
+### Range Queries
+
+```sql
+-- Age between 18 and 65
+SELECT * FROM users WHERE age >= 18 AND age <= 65;
+
+-- Price range
+SELECT * FROM products WHERE price >= 10 AND price < 100;
+```
+
+### Exclusion Queries
+
+```sql
+-- Everyone except Alice
+SELECT * FROM users WHERE name != 'Alice';
+
+-- Active users only
+SELECT * FROM users WHERE active != false;
+```
+
+## Implementation Details
+
+From the parser (src/sql/parser.rs:40-63):
+
+```rust
+#[derive(Debug, Clone, PartialEq)]
+pub enum Expr {
+    Literal(Value),
+    Column(String),
+    BinaryOp {
+        left: Box<Expr>,
+        op: BinaryOperator,
+        right: Box<Expr>,
+    },
+}
+```
+
+Parsing precedence (from highest to lowest):
+
+1. **Operands** (literals and column names) - `parse_operand()`
+2. **Comparison** - `parse_comparison()`
+3. **AND** - `parse_and_expr()`
+4. **OR** - `parse_or_expr()`
+
+## Evaluation
+
+From the evaluator (src/sql/evaluator.rs), WHERE clauses are evaluated by:
+
+1. Resolving column references to actual values from the row
+2. Comparing values based on the operator
+3. Combining results with AND/OR logic
+4. Returning true/false to determine if the row matches
+
+## Common Errors
+
+<Warning>
+**Missing Operand**
+
+```sql
+-- ❌ Wrong: missing right side
+SELECT * FROM users WHERE id =;
+
+-- ✓ Correct
+SELECT * FROM users WHERE id = 1;
+```
+</Warning>
+
+<Warning>
+**Missing Operator**
+
+```sql
+-- ❌ Wrong: no comparison operator
+SELECT * FROM users WHERE id 1;
+
+-- ✓ Correct
+SELECT * FROM users WHERE id = 1;
+```
+</Warning>
+
+<Warning>
+**Invalid Operand**
+
+```sql
+-- ❌ Wrong: can't use * as operand
+SELECT * FROM users WHERE * = 1;
+
+-- ✓ Correct: use column name
+SELECT * FROM users WHERE id = 1;
+```
+</Warning>
+
+## See Also
+
+- [SELECT](/sql/select) - Query with WHERE clauses
+- [UPDATE](/sql/update) - Update filtered rows
+- [DELETE](/sql/delete) - Delete filtered rows
+- [Data Types](/sql/data-types) - Understand comparison types

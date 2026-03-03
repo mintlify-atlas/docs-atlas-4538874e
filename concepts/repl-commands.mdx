@@ -1,0 +1,476 @@
+---
+title: REPL Commands
+description: Meta-commands for interacting with HozonDB from the command-line interface
+---
+
+The HozonDB REPL (Read-Eval-Print Loop) provides an interactive shell for executing SQL statements and database operations. Commands starting with a dot (`.`) are meta-commands that control the REPL itself.
+
+## Starting the REPL
+
+```bash
+cargo run
+```
+
+You'll see:
+
+```
+HozonDB v0.1.0
+Enter '.help' for usage hints.
+
+hozondb>
+```
+
+## Meta-Commands
+
+Meta-commands control database operations and the REPL environment.
+
+### .open
+
+Open or create a database file.
+
+**Syntax**: `.open <filename>`
+
+**Example**:
+```
+hozondb> .open mydb.hdb
+Opened database file: mydb.hdb
+```
+
+<Tabs>
+  <Tab title="Behavior">
+    - If file doesn't exist, creates new database
+    - If file exists, opens and loads catalog
+    - Creates a lock file (`.hdb.lock`) to prevent concurrent access
+    - Validates magic number (0x484F5A4E) in existing files
+
+    ```rust
+    // From src/repl.rs:129-145
+    fn cmd_open(&mut self, parts: &[&str]) -> io::Result<()> {
+        if parts.len() != 2 {
+            eprintln!("Usage: .open <file>");
+            return Ok(());
+        }
+        
+        let filename = parts[1];
+        
+        // Create new executor
+        let pm = PageManager::new(filename)?;
+        let catalog = TableCatalog::new(pm)?;
+        let executor = Executor::new(catalog);
+        self.executor = Some(executor);
+        
+        println!("Opened database file: {}", filename);
+        Ok(())
+    }
+    ```
+  </Tab>
+
+  <Tab title="Errors">
+    **Database already in use**:
+    ```
+    hozondb> .open mydb.hdb
+    Error: Database is already in use. Lock file exists: mydb.hdb.lock
+    ```
+
+    This occurs when:
+    - Another HozonDB instance has the file open
+    - Previous session crashed without cleaning up lock file
+
+    **Solution**: Remove the `.hdb.lock` file manually if you're sure no other process is using it.
+
+    **Invalid database file**:
+    ```
+    hozondb> .open corrupted.hdb
+    Error: Invalid magic number
+    ```
+  </Tab>
+
+  <Tab title="Examples">
+    **Create new database**:
+    ```
+    hozondb> .open test.hdb
+    Opened database file: test.hdb
+    hozondb> CREATE TABLE users (id INTEGER, name TEXT);
+    Table 'users' created.
+    ```
+
+    **Open existing database**:
+    ```
+    hozondb> .open existing.hdb
+    Opened database file: existing.hdb
+    hozondb> SELECT * FROM users;
+    | id | name |
+    | 1 | "Alice" |
+    | 2 | "Bob" |
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+You must use `.open` before executing any SQL commands. Attempting to run SQL without an open database will result in:
+```
+No database is open. Use '.open <file>' first.
+```
+</Warning>
+
+### .help
+
+Display available commands.
+
+**Syntax**: `.help`
+
+**Output**:
+```
+hozondb> .help
+Available commands:
+  .help              - Show this help message
+  .open <file>       - Open or create a database file
+  .benchmark [rows]  - Run performance benchmarks (default: 10000 rows)
+  .exit              - Exit the program
+```
+
+```rust
+// From src/repl.rs:120-127
+fn cmd_help(&self) -> io::Result<()> {
+    println!("Available commands:");
+    println!("  .help              - Show this help message");
+    println!("  .open <file>       - Open or create a database file");
+    println!("  .benchmark [rows]  - Run performance benchmarks (default: 10000 rows)");
+    println!("  .exit              - Exit the program");
+    Ok(())
+}
+```
+
+### .benchmark
+
+Run performance benchmarks on the current database.
+
+**Syntax**: `.benchmark [rows]`
+
+**Parameters**:
+- `rows` (optional): Number of rows to use in benchmarks (default: 10,000)
+
+**Example**:
+```
+hozondb> .open bench.hdb
+hozondb> .benchmark 1000
+
+╔══════════════════════════════════════════════════════════════╗
+║              HozonDB Benchmark Starting...                   ║
+╚══════════════════════════════════════════════════════════════╝
+
+Configuration:
+  Rows: 1000
+
+Setting up test data...
+Running benchmarks...
+```
+
+<Tabs>
+  <Tab title="What It Tests">
+    The benchmark suite measures:
+
+    **Write Operations**:
+    - Bulk INSERT (1000 rows)
+    - Single UPDATE
+    - Bulk UPDATE (all rows)
+    - Single DELETE
+    - Bulk DELETE (all rows)
+
+    **Read Operations**:
+    - Full table scan (SELECT *)
+    - Filtered SELECT with WHERE clause
+    - Column projection (specific columns)
+
+    **Metrics Collected**:
+    - Duration (milliseconds)
+    - Pages read
+    - Pages written
+    - Rows scanned
+    - Rows modified/returned
+  </Tab>
+
+  <Tab title="Sample Output">
+    ```
+    BENCHMARK RESULTS
+
+    ━━━ READ OPERATIONS ━━━
+    ┌───────────────────────────┬────────────┬────────────┬──────────────┬──────────────┐
+    │ Query                     │ Duration   │ Pages      │ Rows         │ Rows         │
+    │                           │ (ms)       │ Read       │ Scanned      │ Returned     │
+    ├───────────────────────────┼────────────┼────────────┼──────────────┼──────────────┤
+    │ SELECT *                  │      12.34 │          5 │         1000 │         1000 │
+    │ SELECT WHERE id > 500     │      11.23 │          5 │         1000 │          500 │
+    │ SELECT name, id           │      10.45 │          5 │         1000 │         1000 │
+    └───────────────────────────┴────────────┴────────────┴──────────────┴──────────────┘
+
+    ━━━ WRITE OPERATIONS ━━━
+    ┌───────────────────────────┬────────────┬────────────┬────────────┬──────────────┐
+    │ Operation                 │ Duration   │ Pages      │ Pages      │ Rows         │
+    │                           │ (ms)       │ Read       │ Written    │ Modified     │
+    ├───────────────────────────┼────────────┼────────────┼────────────┼──────────────┤
+    │ INSERT (1000 rows)        │      45.67 │          0 │          5 │         1000 │
+    │ UPDATE (single)           │       8.90 │          5 │          5 │            1 │
+    │ UPDATE (all)              │      23.45 │          5 │          5 │         1000 │
+    │ DELETE (single)           │       7.89 │          5 │          5 │            1 │
+    │ DELETE (all)              │      15.67 │          5 │          1 │         1000 │
+    └───────────────────────────┴────────────┴────────────┴────────────┴──────────────┘
+    ```
+  </Tab>
+
+  <Tab title="Implementation">
+    ```rust
+    // From src/repl.rs:147-224
+    fn cmd_benchmark(&mut self, parts: &[&str]) -> io::Result<()> {
+        // Check if database is open
+        let executor = match self.executor.as_mut() {
+            Some(exec) => exec,
+            None => {
+                eprintln!("No database is open. Use '.open <file>' first.");
+                return Ok(());
+            }
+        };
+        
+        // Parse number of rows (default 10,000)
+        let num_rows = if parts.len() > 1 {
+            match parts[1].parse::<usize>() {
+                Ok(n) if n > 0 => n,
+                _ => {
+                    eprintln!("Invalid row count. Usage: .benchmark [rows]");
+                    return Ok(());
+                }
+            }
+        } else {
+            10_000
+        };
+        
+        println!("\n╔══════════════════════════════════════════════════════════════╗");
+        println!("║              HozonDB Benchmark Starting...                   ║");
+        println!("╚══════════════════════════════════════════════════════════════╝\n");
+        println!("Configuration:");
+        println!("  Rows: {}", num_rows);
+        println!();
+        
+        // Create benchmark runner
+        let mut runner = BenchmarkRunner::new(executor, num_rows);
+        
+        // Setup test data
+        println!("Setting up test data...");
+        if let Err(e) = runner.setup() {
+            eprintln!("Benchmark setup failed: {}", e);
+            return Ok(());
+        }
+        
+        // Run benchmarks
+        println!("Running benchmarks...");
+        let results = match runner.run_all_benchmarks() {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("Benchmark failed: {}", e);
+                runner.cleanup().ok();
+                return Ok(());
+            }
+        };
+        
+        // Cleanup
+        println!("Cleaning up...\n");
+        runner.cleanup()?;
+        
+        // Display results
+        // ...
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+Benchmarks create a temporary table `_benchmark_test` and clean it up after completion. The database must be open before running benchmarks.
+</Note>
+
+### .exit
+
+Exit the REPL and close the database.
+
+**Syntax**: `.exit` or `.quit`
+
+**Example**:
+```
+hozondb> .exit
+Exiting HozonDB. Goodbye!
+```
+
+**What happens**:
+1. Executor is dropped
+2. Catalog is saved to disk
+3. All file handles are closed
+4. Lock file (`.hdb.lock`) is automatically removed
+
+```rust
+// From src/repl.rs:41-44
+if input == ".exit" || input == ".quit" {
+    println!("Exiting HozonDB. Goodbye!");
+    break;
+}
+```
+
+## SQL Commands
+
+Any command that doesn't start with `.` is treated as a SQL statement.
+
+### Command Flow
+
+```rust
+// From src/repl.rs:80-117
+fn execute_sql_command(&mut self, sql: &str) -> io::Result<()> {
+    // Check if database is open
+    let executor = match self.executor.as_mut() {
+        Some(exec) => exec,
+        None => {
+            eprintln!("No database is open. Use '.open <file>' first.");
+            return Ok(());
+        }
+    };
+    
+    let tokens = tokenizer::tokenize(sql)?;
+    let statement = Parser::new(tokens).parse()?;
+    let res = executor.execute(statement, &mut None)?;
+    
+    match res {
+        ExecutionResult::Success { message } => {
+            println!("{}", message);
+        }
+        ExecutionResult::Rows { columns, rows } => {
+            // Print column headers
+            for c in columns {
+                print!("| {c} ");
+            }
+            println!("|");
+            
+            // Print rows
+            for row in rows {
+                for r in row.values() {
+                    match r {
+                        Value::Integer(int) => print!("| {:?} ", int),
+                        Value::Text(s) => print!("| {:?} ", s),
+                        Value::Boolean(b) => print!("| {:?} ", b),
+                        Value::Null => print!("| {} ", "Null".to_string()),
+                    }
+                }
+                println!("|");
+            }
+        }
+    }
+    Ok(())
+}
+```
+
+### Supported SQL
+
+- `CREATE TABLE table_name (col1 TYPE, col2 TYPE, ...);`
+- `INSERT INTO table_name VALUES (val1, val2, ...);`
+- `SELECT * FROM table_name;`
+- `SELECT col1, col2 FROM table_name WHERE condition;`
+- `UPDATE table_name SET col1 = val WHERE condition;`
+- `DELETE FROM table_name WHERE condition;`
+- `DROP TABLE table_name;`
+
+See the SQL documentation for detailed syntax.
+
+## Error Handling
+
+<Accordion title="Unknown Meta-Command">
+  ```
+  hozondb> .unknown
+  Unknown command: '.unknown'. Type '.help' for usage.
+  ```
+
+  From `src/repl.rs:69-77`:
+  ```rust
+  match command {
+      ".help" => self.cmd_help(),
+      ".open" => self.cmd_open(&parts),
+      ".benchmark" => self.cmd_benchmark(&parts),
+      _ => {
+          eprintln!("Unknown command: '{}'. Type '.help' for usage.", command);
+          Ok(())
+      }
+  }
+  ```
+</Accordion>
+
+<Accordion title="SQL Syntax Error">
+  ```
+  hozondb> CREATE TABLE users (id INTEGER)
+  Error: Expected ';', found 'Eof'
+  ```
+
+  All SQL statements must end with a semicolon.
+</Accordion>
+
+<Accordion title="Database Not Open">
+  ```
+  hozondb> SELECT * FROM users;
+  No database is open. Use '.open <file>' first.
+  ```
+
+  You must open a database before executing SQL commands.
+</Accordion>
+
+## Usage Examples
+
+### Complete Session
+
+```
+$ cargo run
+HozonDB v0.1.0
+Enter '.help' for usage hints.
+
+hozondb> .open test.hdb
+Opened database file: test.hdb
+
+hozondb> CREATE TABLE users (id INTEGER, name TEXT);
+Table 'users' created.
+
+hozondb> INSERT INTO users VALUES (1, 'Alice');
+1 row inserted.
+
+hozondb> INSERT INTO users VALUES (2, 'Bob');
+1 row inserted.
+
+hozondb> SELECT * FROM users;
+| id | name |
+| 1 | "Alice" |
+| 2 | "Bob" |
+
+hozondb> SELECT name FROM users WHERE id = 2;
+| name |
+| "Bob" |
+
+hozondb> .exit
+Exiting HozonDB. Goodbye!
+```
+
+### Running Benchmarks
+
+```
+hozondb> .open benchmark.hdb
+Opened database file: benchmark.hdb
+
+hozondb> .benchmark 5000
+
+╔══════════════════════════════════════════════════════════════╗
+║              HozonDB Benchmark Starting...                   ║
+╚══════════════════════════════════════════════════════════════╝
+
+Configuration:
+  Rows: 5000
+
+Setting up test data...
+Running benchmarks...
+Cleaning up...
+
+BENCHMARK RESULTS
+
+━━━ READ OPERATIONS ━━━
+...
+```

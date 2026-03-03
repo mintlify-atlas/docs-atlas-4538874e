@@ -1,0 +1,420 @@
+---
+title: Data Types
+description: Supported data types in HozonDB
+---
+
+HozonDB supports four fundamental data types for storing different kinds of values.
+
+## Overview
+
+From the source code (src/catalog/schema.rs:3-9 and src/catalog/row.rs:3-9):
+
+```rust
+pub enum DataType {
+    Integer,
+    Text,
+    Boolean,
+    Null,
+}
+
+pub enum Value {
+    Integer(i32),
+    Text(String),
+    Boolean(bool),
+    Null,
+}
+```
+
+## INTEGER
+
+Stores 32-bit signed integers.
+
+### Range
+
+- Minimum: -2,147,483,648 (-2³¹)
+- Maximum: 2,147,483,647 (2³¹ - 1)
+
+### Examples
+
+```sql
+CREATE TABLE users (id INTEGER, age INTEGER, balance INTEGER);
+
+INSERT INTO users VALUES (1, 25, 1000);
+INSERT INTO users VALUES (2, 30, -500);
+INSERT INTO users VALUES (3, 0, 0);
+```
+
+### Storage
+
+From the source (src/catalog/row.rs:35-37):
+
+- Type tag: 1 byte (value: 1)
+- Value: 4 bytes (little-endian i32)
+- Total: 5 bytes per integer
+
+```rust
+Value::Integer(val) => {
+    bytes.push(1);
+    bytes.extend_from_slice(&val.to_le_bytes());
+}
+```
+
+### Usage
+
+```sql
+-- Positive integers
+INSERT INTO products VALUES (42, 'Widget');
+
+-- Negative integers
+INSERT INTO accounts VALUES (1, -100);
+
+-- Zero
+INSERT INTO counters VALUES (0);
+
+-- Comparisons
+SELECT * FROM users WHERE age > 18;
+SELECT * FROM accounts WHERE balance < 0;
+```
+
+## TEXT
+
+Stores variable-length UTF-8 strings.
+
+### Characteristics
+
+- UTF-8 encoded
+- Variable length
+- No fixed maximum (limited by page size)
+- Empty strings allowed
+
+### Examples
+
+```sql
+CREATE TABLE users (id INTEGER, name TEXT, email TEXT);
+
+INSERT INTO users VALUES (1, 'Alice', 'alice@example.com');
+INSERT INTO users VALUES (2, 'Bob', 'bob@example.com');
+INSERT INTO users VALUES (3, '', 'no-name@example.com');
+```
+
+### String Literals
+
+Use single quotes for string literals:
+
+```sql
+INSERT INTO users VALUES (1, 'Alice');
+SELECT * FROM users WHERE name = 'Bob';
+UPDATE users SET name = 'Charlie' WHERE id = 1;
+```
+
+### Storage
+
+From the source (src/catalog/row.rs:40-44):
+
+- Type tag: 1 byte (value: 2)
+- Length: 4 bytes (u32, little-endian)
+- Data: N bytes (UTF-8 encoded string)
+- Total: 5 + N bytes
+
+```rust
+Value::Text(text) => {
+    bytes.push(2);
+    let text_bytes = text.as_bytes();
+    bytes.extend_from_slice(&(text_bytes.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(text_bytes);
+}
+```
+
+### Usage
+
+```sql
+-- Names and descriptions
+INSERT INTO products VALUES (1, 'Laptop', 'High-performance laptop');
+
+-- Empty strings
+INSERT INTO users VALUES (1, '');
+
+-- Text comparisons
+SELECT * FROM users WHERE name = 'Alice';
+SELECT * FROM products WHERE category != 'Electronics';
+```
+
+## BOOLEAN
+
+Stores true or false values.
+
+### Values
+
+- `true`
+- `false`
+
+### Examples
+
+```sql
+CREATE TABLE users (id INTEGER, name TEXT, active BOOLEAN);
+
+INSERT INTO users VALUES (1, 'Alice', true);
+INSERT INTO users VALUES (2, 'Bob', false);
+```
+
+From the test suite (src/sql/parser.rs:563-576):
+
+```sql
+INSERT INTO users VALUES (1, 'Alice', true);
+```
+
+### Storage
+
+From the source (src/catalog/row.rs:45-48):
+
+- Type tag: 1 byte (value: 3)
+- Value: 1 byte (0 for false, 1 for true)
+- Total: 2 bytes per boolean
+
+```rust
+Value::Boolean(bool) => {
+    bytes.push(3);
+    bytes.push(if *bool { 1 } else { 0 });
+}
+```
+
+### Usage
+
+```sql
+-- Flags and states
+INSERT INTO users VALUES (1, 'Alice', true);
+INSERT INTO orders VALUES (1, 100, false);
+
+-- Boolean comparisons
+SELECT * FROM users WHERE active = true;
+SELECT * FROM tasks WHERE completed = false;
+UPDATE users SET active = false WHERE id = 1;
+DELETE FROM sessions WHERE expired = true;
+```
+
+From the test suite (src/sql/parser.rs:720-735):
+
+```sql
+SELECT * FROM users WHERE active = true;
+```
+
+## NULL
+
+Represents the absence of a value.
+
+### Special Characteristics
+
+<Note>
+NULL is a special value that can be stored in **any column type**, regardless of the column's declared data type.
+</Note>
+
+From the executor (src/sql/executor.rs:662-671):
+
+```rust
+pub fn validate_value_type(value: &Value, data_type: &DataType) -> bool {
+    match (value, data_type) {
+        (Value::Integer(_), DataType::Integer) => true,
+        (Value::Text(_), DataType::Text) => true,
+        (Value::Boolean(_), DataType::Boolean) => true,
+        (Value::Null, _) => true, // NULL can go in any column
+        _ => false,
+    }
+}
+```
+
+### Examples
+
+```sql
+CREATE TABLE users (
+  id INTEGER,
+  name TEXT,
+  active BOOLEAN,
+  data NULL
+);
+
+-- NULL in any column
+INSERT INTO users VALUES (NULL, NULL, NULL, NULL);
+INSERT INTO users VALUES (1, 'Alice', NULL, NULL);
+INSERT INTO users VALUES (NULL, 'Bob', true, NULL);
+```
+
+From the test suite (src/sql/executor.rs:1242-1292):
+
+```sql
+CREATE TABLE users (id INTEGER, name TEXT);
+-- NULL can go in any column type
+INSERT INTO users VALUES (NULL, NULL);
+```
+
+### Storage
+
+From the source (src/catalog/row.rs:49-51):
+
+- Type tag: 1 byte (value: 4)
+- No additional data
+- Total: 1 byte per NULL
+
+```rust
+Value::Null => {
+    bytes.push(4);
+}
+```
+
+### Usage
+
+```sql
+-- Optional fields
+INSERT INTO users VALUES (1, 'Alice', NULL);
+
+-- NULL comparisons
+SELECT * FROM users WHERE email = NULL;
+UPDATE users SET middle_name = NULL WHERE id = 1;
+DELETE FROM temp WHERE value = NULL;
+```
+
+From the test suite (src/sql/parser.rs:940-955):
+
+```sql
+SELECT * FROM users WHERE data = NULL;
+```
+
+## Type Validation
+
+HozonDB enforces type safety when inserting and updating data.
+
+### INSERT Type Checking
+
+From the executor (src/sql/executor.rs:290-303):
+
+```rust
+// Validate data types
+for (value, column) in values.iter().zip(columns.iter()) {
+    if !validate_value_type(value, column.data_type()) {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            format!(
+                "Type mismatch for column '{}': expected {:?}, got {:?}",
+                column.name(),
+                column.data_type(),
+                value
+            ),
+        ));
+    }
+}
+```
+
+### Valid Combinations
+
+```sql
+CREATE TABLE test (int_col INTEGER, text_col TEXT, bool_col BOOLEAN);
+
+-- ✓ Correct types
+INSERT INTO test VALUES (42, 'hello', true);
+INSERT INTO test VALUES (NULL, NULL, NULL);  -- NULL works anywhere
+
+-- ❌ Type mismatch
+INSERT INTO test VALUES ('text', 123, 'not a bool');  -- Error!
+```
+
+### UPDATE Type Checking
+
+From the executor (src/sql/executor.rs:572-584):
+
+```rust
+if !validate_value_type(value, column.data_type()) {
+    return Err(Error::new(
+        ErrorKind::InvalidData,
+        format!(
+            "Type mismatch for column '{}': expected {:?}, got {:?}",
+            col_name,
+            column.data_type(),
+            value
+        ),
+    ));
+}
+```
+
+## Storage Format
+
+All values are serialized with a type tag followed by the value data:
+
+| Type    | Tag | Data Format                  | Total Bytes |
+|---------|-----|------------------------------|-------------|
+| INTEGER | 1   | 4 bytes (i32, little-endian) | 5           |
+| TEXT    | 2   | 4 bytes length + N bytes UTF-8 | 5 + N     |
+| BOOLEAN | 3   | 1 byte (0 or 1)              | 2           |
+| NULL    | 4   | (none)                       | 1           |
+
+From the source (src/catalog/row.rs:30-56).
+
+## Complete Example
+
+```sql
+-- Create table with all types
+CREATE TABLE demo (
+  id INTEGER,
+  name TEXT,
+  active BOOLEAN,
+  optional NULL
+);
+
+-- Insert various values
+INSERT INTO demo VALUES (1, 'Alice', true, NULL);
+INSERT INTO demo VALUES (2, 'Bob', false, NULL);
+INSERT INTO demo VALUES (-5, '', true, NULL);
+INSERT INTO demo VALUES (NULL, NULL, NULL, NULL);
+
+-- Query by type
+SELECT * FROM demo WHERE id > 0;
+SELECT * FROM demo WHERE name = 'Alice';
+SELECT * FROM demo WHERE active = true;
+SELECT * FROM demo WHERE optional = NULL;
+
+-- Update types
+UPDATE demo SET active = false WHERE id = 1;
+UPDATE demo SET name = 'Charlie' WHERE id = 2;
+UPDATE demo SET id = 100 WHERE name = 'Alice';
+```
+
+From the test suite (src/sql/executor.rs:1127-1195):
+
+```sql
+CREATE TABLE test (
+  int_col INTEGER,
+  text_col TEXT,
+  bool_col BOOLEAN,
+  null_col NULL
+);
+
+INSERT INTO test VALUES (42, 'hello', true, NULL);
+```
+
+## Limitations
+
+<Warning>
+**No Type Conversion**
+
+HozonDB does not perform automatic type conversion. Values must exactly match the column type (except NULL):
+
+```sql
+CREATE TABLE users (age INTEGER);
+
+-- ❌ Error: cannot insert text into integer column
+INSERT INTO users VALUES ('25');
+
+-- ✓ Correct: use integer literal
+INSERT INTO users VALUES (25);
+```
+</Warning>
+
+<Note>
+**No VARCHAR or Other SQL Types**
+
+HozonDB only supports these four types. Standard SQL types like VARCHAR, CHAR, BIGINT, FLOAT, DATE, etc. are not supported.
+</Note>
+
+## See Also
+
+- [CREATE TABLE](/sql/create-table) - Define columns with data types
+- [INSERT](/sql/insert) - Add typed values
+- [WHERE Clauses](/sql/where-clauses) - Compare values of different types

@@ -1,0 +1,114 @@
+---
+title: Introduction to HozonDB
+description: A SQLite-like database built from scratch in Rust with page-based storage and SQL support
+---
+
+# Welcome to HozonDB
+
+HozonDB is a SQLite-like database built from scratch in Rust. It's a learning project that implements core database concepts including page-based storage, SQL parsing and execution, and performance benchmarking.
+
+<Note>
+HozonDB is a learning project built in public. It demonstrates fundamental database internals including storage engines, query execution, and transaction management.
+</Note>
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Page-Based Storage" icon="database">
+    Custom storage engine with 4KB pages, file locking, and multi-page support with free page management
+  </Card>
+  
+  <Card title="SQL Support" icon="code">
+    Full SQL parser and executor supporting CREATE TABLE, INSERT, SELECT, UPDATE, DELETE, and DROP TABLE statements
+  </Card>
+  
+  <Card title="WHERE Clause Filtering" icon="filter">
+    Advanced filtering with support for comparison operators and logical operators (AND, OR)
+  </Card>
+  
+  <Card title="Interactive REPL" icon="terminal">
+    Command-line interface with meta-commands for database management and SQL execution
+  </Card>
+  
+  <Card title="Benchmark Suite" icon="chart-line">
+    Built-in performance testing with detailed metrics tracking pages read/written, rows scanned, and query duration
+  </Card>
+  
+  <Card title="Written in Rust" icon="rust">
+    Built entirely in Rust for safety, performance, and zero external dependencies
+  </Card>
+</CardGroup>
+
+## Development Status
+
+<Steps>
+  <Step title="Phase 1: Page-based storage + file locking">
+    Implemented 4KB page system with file-based locking mechanism
+  </Step>
+  
+  <Step title="Phase 2: SQL support (CREATE, INSERT, SELECT)">
+    Built SQL tokenizer, parser, and executor for basic operations
+  </Step>
+  
+  <Step title="Phase 3: WHERE clauses">
+    Added filtering capabilities with expression evaluation
+  </Step>
+  
+  <Step title="Phase 4: More SQL support (DROP, DELETE, UPDATE)">
+    Extended SQL support for data modification and schema changes
+  </Step>
+  
+  <Step title="Phase 5: Multi-Page Support">
+    Implemented page chaining and free page management
+  </Step>
+  
+  <Step title="Phase 6: Manual Compaction (In Progress)">
+    Working on database optimization and space reclamation
+  </Step>
+  
+  <Step title="Phase 7: Indexing (Planned)">
+    Future work on B-tree indexes for query performance
+  </Step>
+</Steps>
+
+## Architecture Overview
+
+HozonDB consists of several core components:
+
+- **Page Manager** (`src/storage/page.rs`): Handles 4KB page allocation, reading, and writing with metadata tracking
+- **Table Catalog** (`src/catalog/`): Manages table schemas, rows, and column definitions
+- **SQL Parser** (`src/sql/parser.rs`): Converts SQL text into executable statements
+- **Executor** (`src/sql/executor.rs`): Executes parsed statements and returns results
+- **REPL** (`src/repl.rs`): Interactive command-line interface
+- **Benchmark Runner** (`src/benchmark/runner.rs`): Performance testing framework
+
+## Quick Example
+
+Here's a simple example of using HozonDB:
+
+```sql
+hozondb> .open test.hdb
+Opened database file: test.hdb
+
+hozondb> CREATE TABLE users (id INTEGER, name TEXT);
+Table 'users' created.
+
+hozondb> INSERT INTO users VALUES (1, 'Alice');
+1 row inserted.
+
+hozondb> SELECT * FROM users;
+| id | name |
+| 1 | "Alice" |
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get started with HozonDB in under 5 minutes
+  </Card>
+  
+  <Card title="Installation" icon="download" href="/installation">
+    Install HozonDB using Rust and Cargo
+  </Card>
+</CardGroup>

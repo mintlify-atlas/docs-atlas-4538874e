@@ -1,0 +1,259 @@
+---
+title: File Format
+description: HozonDB database file format specification with header structure and page layout
+---
+
+HozonDB stores all database content in a single `.hdb` file using a page-based format. This document describes the binary file structure and layout.
+
+## File Extension
+
+HozonDB database files use the `.hdb` extension (HozonDB).
+
+## Overall Structure
+
+```
+┌─────────────────────────────────────┐
+│  Page 0: Database Header (4096 B)  │
+├─────────────────────────────────────┤
+│  Page 1: System Catalog (4096 B)   │
+├─────────────────────────────────────┤
+│  Page 2: Table Data (4096 B)       │
+├─────────────────────────────────────┤
+│  Page 3: Table Data (4096 B)       │
+├─────────────────────────────────────┤
+│  ...                                │
+├─────────────────────────────────────┤
+│  Page N: Table Data (4096 B)       │
+└─────────────────────────────────────┘
+```
+
+Every page is exactly **4096 bytes**. The file size is always a multiple of 4096 bytes:
+
+```rust
+file_size = num_pages * PAGE_SIZE
+```
+
+## Page 0: Database Header
+
+The first page (Page 0) contains the database header with critical metadata.
+
+### Header Structure
+
+```rust
+pub const HEADER_SIZE: usize = 12;
+```
+
+The first **12 bytes** of Page 0 contain:
+
+```
+Bytes 0-3:   Magic Number (u32, little-endian)
+Bytes 4-7:   Number of Pages (u32, little-endian)
+Bytes 8-11:  First Free Page ID (u32, little-endian)
+```
+
+Bytes 12-4095 are currently unused (reserved for future extensions).
+
+### Magic Number
+
+```rust
+pub const MAGIC_NUMBER: u32 = 0x484F5A4E;  // "HOZN" in ASCII
+```
+
+The magic number identifies the file as a valid HozonDB database. It spells **"HOZN"** when viewed as ASCII bytes:
+
+```
+0x48 = 'H'
+0x4F = 'O'
+0x5A = 'Z'
+0x4E = 'N'
+```
+
+When opening a database, HozonDB verifies the magic number:
+
+```rust
+let mut magic_bytes = [0u8; 4];
+file.read_exact(&mut magic_bytes)?;
+let magic_number = u32::from_le_bytes(magic_bytes);
+
+if magic_number != MAGIC_NUMBER {
+    return Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "Invalid magic number",
+    ));
+}
+```
+
+### Number of Pages
+
+Stores the total number of pages in the database (including Page 0). This value is updated whenever pages are allocated.
+
+### First Free Page
+
+Pointer to the head of the free page linked list. Uses a sentinel value for "None":
+
+```rust
+const NULL_PAGE: u32 = 0xFFFFFFFF;  // Represents None
+```
+
+- `0xFFFFFFFF`: No free pages available
+- Any other value: Page ID of the first free page
+
+### Header Initialization
+
+When creating a new database:
+
+```rust
+let mut headers = [0u8; PAGE_SIZE];
+headers[0..4].copy_from_slice(&MAGIC_NUMBER.to_le_bytes());  // Magic
+headers[4..8].copy_from_slice(&1u32.to_le_bytes());           // num_pages = 1
+headers[8..12].copy_from_slice(&NULL_PAGE.to_le_bytes());     // no free pages
+file.write_all(&headers)?;
+```
+
+## Page 1: System Catalog
+
+Page 1 stores the system catalog containing metadata about all tables:
+
+```
+┌────────────────────────────────────┐
+│ Number of Tables (4 bytes)         │
+├────────────────────────────────────┤
+│ Table 1 Schema (variable length)   │
+│ Table 1 First Page ID (4 bytes)    │
+├────────────────────────────────────┤
+│ Table 2 Schema (variable length)   │
+│ Table 2 First Page ID (4 bytes)    │
+├────────────────────────────────────┤
+│ ...                                │
+└────────────────────────────────────┘
+```
+
+### Catalog Structure
+
+```rust
+// Bytes 0-3: Number of tables (u32, little-endian)
+let num_tables = u32::from_le_bytes([...]) as usize;
+
+// For each table:
+//   - Schema bytes (variable length)
+//   - First page ID (4 bytes, u32, little-endian)
+```
+
+The catalog is read during database initialization and written whenever table metadata changes.
+
+## Pages 2+: Data Pages
+
+Pages 2 and above store actual table data. Each data page has a standard structure:
+
+```
+┌────────────────────────────────────┐
+│ Page Metadata (9 bytes)            │
+├────────────────────────────────────┤
+│ Row Data (4087 bytes)              │
+│                                    │
+│ - Row 1 (variable length)          │
+│ - Row 2 (variable length)          │
+│ - ...                              │
+│                                    │
+└────────────────────────────────────┘
+```
+
+### Data Page Metadata (9 bytes)
+
+```
+Byte 0:       is_full (1 byte, bool)
+Bytes 1-2:    last_offset (2 bytes, u16, little-endian)
+Bytes 3-4:    num_rows (2 bytes, u16, little-endian)  
+Bytes 5-8:    next_page (4 bytes, u32, little-endian)
+```
+
+- **is_full**: `1` if page cannot accept more rows, `0` otherwise
+- **last_offset**: Byte offset where next row should be written
+- **num_rows**: Number of rows currently stored in this page
+- **next_page**: Page ID of next page in chain, or `0xFFFFFFFF` if last page
+
+### Free Page Structure
+
+Free pages (pages in the free list) have a minimal structure:
+
+```
+Bytes 0-3:    Next Free Page ID (4 bytes, u32, little-endian)
+Bytes 4-4095: Unused
+```
+
+This creates a linked list of free pages for efficient reuse.
+
+## Byte Ordering
+
+All multi-byte integers use **little-endian** byte order:
+
+```rust
+// Writing a u32
+data.copy_from_slice(&value.to_le_bytes());
+
+// Reading a u32  
+let value = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+```
+
+## File Growth
+
+The database file grows by exactly one page at a time:
+
+```rust
+let new_size = (self.num_pages as u64) * (PAGE_SIZE as u64);
+file.set_len(new_size)?;
+```
+
+## Example: Reading the Header
+
+```rust
+let mut file = File::open("mydb.hdb")?;
+
+// Read magic number (bytes 0-3)
+let mut magic_bytes = [0u8; 4];
+file.read_exact(&mut magic_bytes)?;
+let magic = u32::from_le_bytes(magic_bytes);
+assert_eq!(magic, 0x484F5A4E);
+
+// Read number of pages (bytes 4-7)
+let mut num_pages_bytes = [0u8; 4];
+file.read_exact(&mut num_pages_bytes)?;
+let num_pages = u32::from_le_bytes(num_pages_bytes);
+
+// Read first free page (bytes 8-11)
+let mut first_free_bytes = [0u8; 4];
+file.read_exact(&mut first_free_bytes)?;
+let first_free = u32::from_le_bytes(first_free_bytes);
+let first_free_page = if first_free == 0xFFFFFFFF {
+    None
+} else {
+    Some(first_free)
+};
+```
+
+## Lock File
+
+In addition to the `.hdb` file, HozonDB creates a `.hdb.lock` file to prevent concurrent access:
+
+```
+mydb.hdb       # Database file
+mydb.hdb.lock  # Lock file (auto-created)
+```
+
+The lock file is:
+- Created when opening the database
+- Deleted when closing (in `Drop` implementation)
+- Used to detect if database is already in use
+
+## File Validation
+
+When opening a database, HozonDB performs validation:
+
+1. **Magic number check**: Ensures file is a valid HozonDB database
+2. **File size check**: Verifies file size is a multiple of PAGE_SIZE
+3. **Lock check**: Prevents concurrent access
+
+## Related Topics
+
+- [Page-Based Storage](/storage/page-based-storage) - Page structure and management
+- [Multi-Page Support](/storage/multi-page-support) - Linked page chains
