@@ -38,7 +38,7 @@ cargo 1.75.0 (or later)
 ```
 
 <Note>
-HozonDB uses Rust edition 2024. Make sure you have a recent version of Rust (1.75.0 or later recommended).
+The project manifest specifies Rust edition 2024, but this edition doesn't exist yet. You may need to change it to edition 2021 in Cargo.toml if you encounter build errors.
 </Note>
 
 ## Installing HozonDB
@@ -48,13 +48,9 @@ HozonDB uses Rust edition 2024. Make sure you have a recent version of Rust (1.7
     First, clone the HozonDB source code:
     
     ```bash
-    git clone https://github.com/yourusername/hozondb.git
-    cd hozondb
+    git clone https://github.com/manlikeHB/HozonDB.git
+    cd HozonDB
     ```
-    
-    <Info>
-    Replace `yourusername` with the actual repository location.
-    </Info>
   </Step>
   
   <Step title="Build the project">
@@ -101,7 +97,7 @@ HozonDB has a clean, modular architecture with zero external dependencies:
 
 ```
 hozondb/
-├── Cargo.toml              # Project manifest (edition 2024)
+├── Cargo.toml              # Project manifest
 ├── README.md               # Project overview
 └── src/
     ├── main.rs             # Entry point
@@ -269,17 +265,17 @@ test.hdb.lock    # Lock file (auto-managed)
     ```
   </Accordion>
   
-  <Accordion title="Rust edition 2024 errors">
+  <Accordion title="Rust edition errors">
     If you see errors about edition 2024:
     
     ```
-    error: edition 2024 is unstable
+    error: edition `2024` is not defined
     ```
     
-    **Solution**: Update your Rust toolchain to the latest version:
+    **Solution**: Edition 2024 doesn't exist yet. Edit `Cargo.toml` and change the edition to 2021:
     
-    ```bash
-    rustup update stable
+    ```toml
+    edition = "2021"
     ```
   </Accordion>
   
