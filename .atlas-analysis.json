@@ -1,0 +1,87 @@
+{
+  "projectType": "data-platform",
+  "projectName": "HozonDB",
+  "projectDescription": "A SQLite-like database built from scratch in Rust with page-based storage and SQL support.",
+  "theme": "aspen",
+  "primaryColor": "#CE422B",
+  "lightColor": "#F74B00",
+  "darkColor": "#A33520",
+  "navigation": {
+    "groups": [
+      {
+        "group": "Getting Started",
+        "pages": [
+          "introduction",
+          "quickstart",
+          "installation"
+        ]
+      },
+      {
+        "group": "Core Concepts",
+        "pages": [
+          "concepts/architecture",
+          "concepts/data-model",
+          "concepts/repl-commands"
+        ]
+      },
+      {
+        "group": "SQL Guide",
+        "pages": [
+          "sql/overview",
+          "sql/create-table",
+          "sql/insert",
+          "sql/select",
+          "sql/update",
+          "sql/delete",
+          "sql/drop-table",
+          "sql/where-clauses",
+          "sql/data-types"
+        ]
+      },
+      {
+        "group": "Storage Engine",
+        "pages": [
+          "storage/page-based-storage",
+          "storage/file-format",
+          "storage/multi-page-support"
+        ]
+      },
+      {
+        "group": "Performance",
+        "pages": [
+          "performance/benchmarking",
+          "performance/optimization"
+        ]
+      },
+      {
+        "group": "API Reference",
+        "pages": [
+          "api/repl",
+          "api/executor",
+          "api/parser",
+          "api/page-manager",
+          "api/table-catalog"
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Page-based storage engine with 4KB pages",
+    "SQL parser and executor supporting CREATE, INSERT, SELECT, UPDATE, DELETE, DROP",
+    "WHERE clause filtering with comparison and logical operators",
+    "Multi-page table support with linked pages",
+    "Interactive REPL with meta-commands",
+    "Built-in benchmark suite for performance testing",
+    "File-based locking mechanism",
+    "Support for INTEGER, TEXT, BOOLEAN, and NULL data types"
+  ],
+  "publicApiSurface": [
+    "Repl::new() and Repl::run()",
+    "Executor::new() and Executor::execute()",
+    "Parser::new() and Parser::parse()",
+    "PageManager::new() and page operations",
+    "TableCatalog::new() and table operations",
+    "Statement enum (CreateTable, Insert, Select, Update, Delete, DropTable)",
+    "Meta-commands: .open, .help, .benchmark, .exit"
+  ]
+}
